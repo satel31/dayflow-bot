@@ -493,7 +493,8 @@ def normalize_plan(plan: AssistantPlan) -> AssistantPlan:
         outside_work_hours = False
 
     if preferred_period and preferred_period == excluded_period:
-        excluded_period = ""
+        # Если один и тот же период и выбран, и исключен, оставляем исключение.
+        preferred_period = ""
 
     duration_minutes = int(plan.duration_minutes or 60)
     if duration_minutes <= 0:

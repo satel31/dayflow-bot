@@ -732,8 +732,46 @@ def test_normalize_plan_clears_conflicting_periods():
         )
     )
 
-    assert normalized.preferred_period == "morning"
-    assert normalized.excluded_period == ""
+    assert normalized.preferred_period == ""
+    assert normalized.excluded_period == "morning"
+
+
+def test_handle_natural_language_excludes_morning_when_user_says_not_morning(monkeypatch):
+    calendar = FakeCalendarService()
+    calendar.range_slots = [
+        (
+            datetime(2026, 4, 25, 6, 0, tzinfo=TZ),
+            datetime(2026, 4, 25, 9, 0, tzinfo=TZ),
+        ),
+        (
+            datetime(2026, 4, 25, 13, 0, tzinfo=TZ),
+            datetime(2026, 4, 25, 14, 0, tzinfo=TZ),
+        ),
+    ]
+    monkeypatch.setattr(bot, "calendar_service", calendar)
+    monkeypatch.setattr(
+        bot,
+        "assistant_service",
+        SimpleNamespace(
+            plan=lambda _: AssistantPlan(
+                action="find_free_slots",
+                reply="",
+                title="Тренировка",
+                date="2026-04-25",
+                duration_minutes=60,
+                outside_work_hours=True,
+            )
+        ),
+    )
+
+    result = bot.handle_natural_language(
+        123,
+        "Создай запись на следующую субботу на тренировку на час, не утром",
+    )
+
+    assert "06:00-09:00" not in result["text"]
+    assert "13:00-14:00" in result["text"]
+    assert "Свободные окна на 2026-04-25 вне рабочего времени" in result["text"]
 
 
 def test_normalize_plan_drops_invalid_filter_values():
