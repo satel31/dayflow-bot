@@ -174,7 +174,7 @@ def test_build_event_create_result_stores_draft_and_resolves_group(monkeypatch):
         event_group="работа",
     )
 
-    result = bot.build_event_create_result(123, plan)
+    result = bot.build_event_create_result(123, plan, message_text="Создай созвон с клиентом")
 
     assert "Создать событие" in result["text"]
     draft = result["draft"]
@@ -351,13 +351,58 @@ def test_handle_natural_language_suggests_slots_for_flexible_event_request(monke
 
     assert 'Нашла варианты для "Запись на брови" вне рабочего времени' in result["text"]
     assert "- 15.04 19:00-19:30" in result["text"]
-    assert result["reply_markup"] is not None
+    assert "reply_markup" not in result
+
+
+def test_handle_natural_language_saves_pending_slot_selection_for_specific_date(monkeypatch):
+    calendar = FakeCalendarService()
+    calendar.range_slots = [
+        (
+            datetime(2026, 5, 2, 13, 0, tzinfo=TZ),
+            datetime(2026, 5, 2, 14, 0, tzinfo=TZ),
+        ),
+        (
+            datetime(2026, 5, 2, 15, 0, tzinfo=TZ),
+            datetime(2026, 5, 2, 18, 0, tzinfo=TZ),
+        ),
+    ]
+    monkeypatch.setattr(bot, "calendar_service", calendar)
+    monkeypatch.setattr(
+        bot,
+        "assistant_service",
+        SimpleNamespace(
+            plan=lambda _: AssistantPlan(
+                action="create_event",
+                reply="",
+                date="2026-05-02",
+                time=None,
+                title="Тренировка",
+                duration_minutes=60,
+                preferred_period="day",
+            )
+        ),
+    )
+
+    result = bot.handle_natural_language(123, "Создай запись на тренировку на 60мин днём")
+
+    assert 'Нашла варианты для "Тренировка"' in result["text"]
+    assert "reply_markup" not in result
+    assert 123 in bot.pending_slot_selections
+
+    update = make_update(FakeMessage())
+    update.message.text = "Поставь на 17"
+    asyncio.run(bot.text_message(update, None))
+
+    assert isinstance(bot.pending_drafts[123], bot.EventCreateDraft)
+    assert bot.pending_drafts[123].start_at == datetime(2026, 5, 2, 17, 0, tzinfo=TZ)
 
 
 def test_callback_handler_turns_slot_into_event_draft(monkeypatch):
     calendar = FakeCalendarService()
     monkeypatch.setattr(bot, "calendar_service", calendar)
     bot.pending_slot_selections[123] = bot.PendingSlotSelection(
+        plan=AssistantPlan(action="find_free_slots", reply="", title="Запись на брови"),
+        request_text="Создай запись на брови",
         title="Запись на брови",
         duration_minutes=30,
         event_group="",
@@ -380,6 +425,135 @@ def test_callback_handler_turns_slot_into_event_draft(monkeypatch):
     assert isinstance(bot.pending_drafts[123], bot.EventCreateDraft)
     assert bot.pending_drafts[123].start_at == datetime(2026, 4, 15, 19, 0, tzinfo=TZ)
     assert 'Создать событие "Запись на брови"' in query.edits[0]["text"]
+
+
+def test_text_message_turns_pending_slot_selection_into_event_draft(monkeypatch):
+    calendar = FakeCalendarService()
+    monkeypatch.setattr(bot, "calendar_service", calendar)
+    bot.pending_slot_selections[123] = bot.PendingSlotSelection(
+        plan=AssistantPlan(action="find_free_slots", reply="", title="Тренировка", event_group="спорт"),
+        request_text="Создай запись на следующую субботу на тренировку на 60мин днём",
+        title="Тренировка",
+        duration_minutes=60,
+        event_group="спорт",
+        candidates=(
+            (
+                datetime(2026, 4, 15, 18, 0, tzinfo=TZ),
+                datetime(2026, 4, 15, 19, 0, tzinfo=TZ),
+            ),
+            (
+                datetime(2026, 4, 15, 19, 0, tzinfo=TZ),
+                datetime(2026, 4, 15, 20, 0, tzinfo=TZ),
+            ),
+            (
+                datetime(2026, 4, 15, 20, 0, tzinfo=TZ),
+                datetime(2026, 4, 15, 21, 0, tzinfo=TZ),
+            ),
+        ),
+    )
+    update = make_update(FakeMessage())
+    update.message.text = "поставь на три"
+
+    asyncio.run(bot.text_message(update, None))
+
+    assert isinstance(bot.pending_drafts[123], bot.EventCreateDraft)
+    assert bot.pending_drafts[123].start_at == datetime(2026, 4, 15, 20, 0, tzinfo=TZ)
+    assert 123 not in bot.pending_slot_selections
+    assert 'Создать событие "Тренировка"' in update.message.replies[0]["text"]
+
+
+def test_text_message_turns_pending_slot_selection_into_event_draft_without_title(monkeypatch):
+    calendar = FakeCalendarService()
+    monkeypatch.setattr(bot, "calendar_service", calendar)
+    bot.pending_slot_selections[123] = bot.PendingSlotSelection(
+        plan=AssistantPlan(action="find_free_slots", reply="", title="", event_group="спорт"),
+        request_text="Создай запись на следующую субботу на тренировку на 60мин днём",
+        title="",
+        duration_minutes=60,
+        event_group="спорт",
+        candidates=(
+            (
+                datetime(2026, 4, 18, 12, 0, tzinfo=TZ),
+                datetime(2026, 4, 18, 13, 0, tzinfo=TZ),
+            ),
+            (
+                datetime(2026, 4, 18, 13, 0, tzinfo=TZ),
+                datetime(2026, 4, 18, 14, 0, tzinfo=TZ),
+            ),
+            (
+                datetime(2026, 4, 18, 14, 0, tzinfo=TZ),
+                datetime(2026, 4, 18, 15, 0, tzinfo=TZ),
+            ),
+        ),
+    )
+    update = make_update(FakeMessage())
+    update.message.text = "Поставь на три"
+
+    asyncio.run(bot.text_message(update, None))
+
+    assert isinstance(bot.pending_drafts[123], bot.EventCreateDraft)
+    assert bot.pending_drafts[123].title == "тренировку"
+    assert bot.pending_drafts[123].start_at == datetime(2026, 4, 18, 14, 0, tzinfo=TZ)
+
+
+def test_text_message_treats_na_tri_as_time_inside_pending_slot_selection(monkeypatch):
+    calendar = FakeCalendarService()
+    monkeypatch.setattr(bot, "calendar_service", calendar)
+    bot.pending_slot_selections[123] = bot.PendingSlotSelection(
+        plan=AssistantPlan(action="find_free_slots", reply="", title="Тренировка", event_group="спорт"),
+        request_text="Создай запись на следующую субботу на тренировку на 60мин днём",
+        title="Тренировка",
+        duration_minutes=60,
+        event_group="спорт",
+        candidates=(
+            (
+                datetime(2026, 4, 15, 13, 0, tzinfo=TZ),
+                datetime(2026, 4, 15, 14, 0, tzinfo=TZ),
+            ),
+            (
+                datetime(2026, 4, 15, 15, 0, tzinfo=TZ),
+                datetime(2026, 4, 15, 18, 0, tzinfo=TZ),
+            ),
+        ),
+    )
+    update = make_update(FakeMessage())
+    update.message.text = "Поставь на три"
+
+    asyncio.run(bot.text_message(update, None))
+
+    assert isinstance(bot.pending_drafts[123], bot.EventCreateDraft)
+    assert bot.pending_drafts[123].start_at == datetime(2026, 4, 15, 15, 0, tzinfo=TZ)
+
+
+def test_text_message_keeps_pending_slot_selection_on_unrelated_followup(monkeypatch):
+    monkeypatch.setattr(
+        bot,
+        "handle_natural_language",
+        lambda chat_id, message_text, user_id=None: {"text": "Уточни еще раз."},
+    )
+    bot.pending_slot_selections[123] = bot.PendingSlotSelection(
+        plan=AssistantPlan(action="find_free_slots", reply="", title="Тренировка"),
+        request_text="Создай запись на тренировку",
+        title="Тренировка",
+        duration_minutes=60,
+        event_group="спорт",
+        candidates=(
+            (
+                datetime(2026, 4, 18, 12, 0, tzinfo=TZ),
+                datetime(2026, 4, 18, 13, 0, tzinfo=TZ),
+            ),
+            (
+                datetime(2026, 4, 18, 13, 0, tzinfo=TZ),
+                datetime(2026, 4, 18, 14, 0, tzinfo=TZ),
+            ),
+        ),
+    )
+    update = make_update(FakeMessage())
+    update.message.text = "потом"
+
+    asyncio.run(bot.text_message(update, None))
+
+    assert 123 in bot.pending_slot_selections
 
 
 def test_callback_handler_toggles_workday(monkeypatch):
@@ -1586,4 +1760,5 @@ def test_extract_selection_index_understands_ordinal_words():
     assert bot.extract_selection_index("первую", 5) == 0
     assert bot.extract_selection_index("первую удали", 5) == 0
     assert bot.extract_selection_index("вторую", 5) == 1
+    assert bot.extract_selection_index("поставь на три", 5) == 2
     assert bot.extract_selection_index("3)", 5) == 2

@@ -130,6 +130,8 @@ class PendingSelection:
 
 @dataclass
 class PendingSlotSelection:
+    plan: AssistantPlan
+    request_text: str
     title: str
     duration_minutes: int
     event_group: str
@@ -240,12 +242,19 @@ def resolve_group_name(raw_name: str) -> str:
 
 def extract_selection_index(text: str, max_items: int) -> int | None:
     tokens = re.findall(r"[0-9]+|[^\W\d_]+", text.casefold(), flags=re.UNICODE)
-    ordinal_prefixes = [
+    number_words = [
         ("перв", 0),
+        ("один", 0),
+        ("одна", 0),
+        ("одно", 0),
         ("втор", 1),
+        ("два", 1),
+        ("две", 1),
         ("трет", 2),
         ("треть", 2),
+        ("три", 2),
         ("четверт", 3),
+        ("четыр", 3),
         ("пят", 4),
     ]
     for token in tokens:
@@ -253,9 +262,74 @@ def extract_selection_index(text: str, max_items: int) -> int | None:
             index = int(token) - 1
             if 0 <= index < max_items:
                 return index
-        for prefix, index in ordinal_prefixes:
-            if token.startswith(prefix) and index < max_items:
-                return index
+        for prefix, index in number_words:
+            if token == prefix or token.startswith(prefix):
+                if index < max_items:
+                    return index
+    return None
+
+
+def extract_requested_time_minutes(
+    text: str,
+    *,
+    preferred_period: str = "",
+    candidate_windows: tuple[tuple[datetime, datetime], ...] = (),
+) -> int | None:
+    lowered = text.casefold()
+    mentions: list[tuple[int, int]] = []
+    time_patterns = [
+        r"\b(?:в|на)\s*(?P<hour>\d{1,2})(?:[:.](?P<minute>\d{2}))?\s*(?:ч(?:ас(?:а|ов)?)?|час(?:а|ов)?|h)?\b",
+        r"\b(?P<hour>\d{1,2}):(?P<minute>\d{2})\b",
+        r"\b(?:в|на)\s+(?P<word>один(?:нацать)?|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать)\b",
+    ]
+    word_to_hour = {
+        "один": 1,
+        "два": 2,
+        "две": 2,
+        "три": 3,
+        "четыре": 4,
+        "пять": 5,
+        "шесть": 6,
+        "семь": 7,
+        "восемь": 8,
+        "девять": 9,
+        "десять": 10,
+        "одиннадцать": 11,
+        "двенадцать": 12,
+    }
+    for pattern in time_patterns:
+        for match in re.finditer(pattern, lowered, flags=re.IGNORECASE):
+            if "word" in match.groupdict() and match.group("word"):
+                hour = word_to_hour.get(match.group("word"), 0)
+                minute = 0
+            else:
+                hour = int(match.group("hour"))
+                minute = int(match.group("minute") or 0)
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                mentions.append((hour, minute))
+
+    if not mentions:
+        return None
+
+    candidate_minutes: list[int] = []
+    afternoon_slots = any(slot_start.hour >= 12 for slot_start, _slot_end in candidate_windows)
+    prefer_pm = preferred_period in {"day", "evening", "night"} or afternoon_slots
+
+    for hour, minute in mentions:
+        candidate_minutes.append(hour * 60 + minute)
+        if 1 <= hour <= 12 and minute == 0:
+            pm_hour = 12 if hour == 12 else hour + 12
+            if prefer_pm:
+                candidate_minutes.insert(0, pm_hour * 60 + minute)
+            else:
+                candidate_minutes.append(pm_hour * 60 + minute)
+
+    for requested_minutes in candidate_minutes:
+        for slot_start, slot_end in candidate_windows:
+            slot_start_minutes = slot_start.hour * 60 + slot_start.minute
+            slot_end_minutes = slot_end.hour * 60 + slot_end.minute
+            if slot_start_minutes <= requested_minutes < slot_end_minutes:
+                return requested_minutes
     return None
 
 
@@ -316,8 +390,8 @@ def resolve_pending_selection(chat_id: int, text: str, user_id: int | None = Non
             group_name=resolve_group_name(plan.event_group),
             conflicts=conflicts,
         )
-        pending_drafts[chat_id] = draft
-        return {"text": format_event_update_draft(draft), "draft": draft}
+    pending_drafts[chat_id] = draft
+    return {"text": format_event_update_draft(draft), "draft": draft}
 
     if pending.kind in {"task_update", "task_delete", "task_complete"}:
         assert isinstance(selected, TaskItem)
@@ -359,6 +433,52 @@ def resolve_pending_selection(chat_id: int, text: str, user_id: int | None = Non
     return None
 
 
+def resolve_pending_slot_selection(chat_id: int, text: str, user_id: int | None = None) -> dict | None:
+    pending = pending_slot_selections.get(chat_id)
+    if not pending:
+        return None
+    requested_minutes = extract_requested_time_minutes(
+        text,
+        preferred_period=pending.plan.preferred_period,
+        candidate_windows=pending.candidates,
+    )
+    if requested_minutes is not None:
+        for slot_start, slot_end in pending.candidates:
+            slot_start_minutes = slot_start.hour * 60 + slot_start.minute
+            slot_end_minutes = slot_end.hour * 60 + slot_end.minute
+            if slot_start_minutes <= requested_minutes < slot_end_minutes:
+                start_at = slot_start.replace(
+                    hour=requested_minutes // 60,
+                    minute=requested_minutes % 60,
+                    second=0,
+                    microsecond=0,
+                )
+                pending_slot_selections.pop(chat_id, None)
+                break
+        else:
+            requested_minutes = None
+    if requested_minutes is None:
+        index = extract_selection_index(text, len(pending.candidates))
+        if index is None:
+            return None
+        pending_slot_selections.pop(chat_id, None)
+        start_at, _end_at = pending.candidates[index]
+    conflicts = tuple(
+        get_calendar_service(user_id).find_conflicts(start_at, pending.duration_minutes)
+    )
+    title = pending.title or pending.plan.title or infer_event_title(pending.request_text)
+    draft = EventCreateDraft(
+        kind="event_create",
+        title=title or pending.request_text,
+        start_at=start_at,
+        duration_minutes=pending.duration_minutes,
+        group_name=resolve_group_name(pending.event_group),
+        conflicts=conflicts,
+    )
+    pending_drafts[chat_id] = draft
+    return {"text": format_event_create_draft(draft), "draft": draft}
+
+
 def infer_event_update_plan(message_text: str, plan: AssistantPlan) -> AssistantPlan | None:
     if plan.action != "chat":
         return None
@@ -373,6 +493,68 @@ def infer_event_update_plan(message_text: str, plan: AssistantPlan) -> Assistant
     if not target:
         return None
     return replace(plan, action="update_event", target_title=plan.target_title or target)
+
+
+def infer_event_title(message_text: str) -> str:
+    text = message_text.strip()
+    lowered = text.casefold()
+    trigger_patterns = [
+        r"созда[йт][^\s]*\s+(?:событие|запись|встреч[ауи]|тренировк[ауи]|визит|поездк[ауи])",
+        r"добав[ьй][^\s]*\s+(?:событие|запись|встреч[ауи]|тренировк[ауи]|визит|поездк[ауи])",
+        r"запиши(?:ть)?\s+(?:меня\s+|мне\s+)?(?:на\s+)?",
+        r"назнач[ьй][^\s]*\s+(?:мне\s+)?",
+        r"постав[ьй][^\s]*\s+(?:мне\s+)?",
+        r"запланир[уй][^\s]*\s+(?:мне\s+)?",
+    ]
+    start_index = 0
+    for pattern in trigger_patterns:
+        match = re.search(pattern, lowered, flags=re.IGNORECASE)
+        if match:
+            start_index = match.end()
+            break
+    candidate = text[start_index:].strip(" :,-")
+    candidate = re.sub(
+        r"^(?:на|в)\s+(?:следующ\w+\s+)?(?:понедельник|вторник|среду|четверг|пятниц[ау]|суббот[ау]|воскресень[ея]|эту\s+субботу|эту\s+пятниц[ау]|эту\s+среду|эту\s+неделю)\b\s*",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    candidate = re.split(
+        r"\s+(?:на|в)\s+\d|\s+(?:утром|днем|днём|вечером|ночью)\b|\s+(?:завтра|сегодня|послезавтра)\b",
+        candidate,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    candidate = candidate.strip(" :,-")
+    candidate = re.sub(r"^(?:на|в)\s+", "", candidate, flags=re.IGNORECASE).strip(" :,-")
+    return candidate
+
+
+def build_slot_selection_result(
+    *,
+    chat_id: int,
+    message_text: str,
+    plan: AssistantPlan,
+    slots: list[tuple[datetime, datetime]],
+) -> dict:
+    suggested_title = plan.title or infer_event_title(message_text)
+    result = {
+        "text": format_slot_suggestions(
+            slots,
+            duration_minutes=plan.duration_minutes,
+            title=suggested_title,
+            outside_work_hours=plan.outside_work_hours,
+        )
+    }
+    pending_slot_selections[chat_id] = PendingSlotSelection(
+        plan=plan,
+        request_text=message_text,
+        title=suggested_title,
+        duration_minutes=plan.duration_minutes,
+        event_group=plan.event_group,
+        candidates=tuple(slots[:8]),
+    )
+    return result
 
 
 def apply_message_preferences(message_text: str, plan: AssistantPlan) -> AssistantPlan:
@@ -1122,6 +1304,16 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if chat_id in pending_drafts and text_is_no(text):
         await finalize_pending_draft(update, confirmed=False)
         return
+    slot_result = resolve_pending_slot_selection(chat_id, text, user_id=user_id)
+    if slot_result:
+        reply_markup = None
+        draft = slot_result.get("draft")
+        if isinstance(draft, (EventCreateDraft, EventUpdateDraft)):
+            reply_markup = event_markup(draft)
+        elif draft:
+            reply_markup = simple_confirm_markup()
+        await safe_reply_text(update.message, slot_result["text"], reply_markup=reply_markup)
+        return
     selection_result = resolve_pending_selection(chat_id, text, user_id=user_id)
     if selection_result:
         reply_markup = None
@@ -1163,8 +1355,6 @@ async def process_text(update: Update, text: str) -> None:
     else:
         pending_clarifications.pop(chat_id, None)
         pending_selections.pop(chat_id, None)
-        if not result.get("reply_markup"):
-            pending_slot_selections.pop(chat_id, None)
 
     reply_markup = None
     draft = result.get("draft")
@@ -1245,35 +1435,15 @@ def handle_natural_language(chat_id: int, message_text: str, user_id: int | None
                 suffix = " вне рабочего времени" if plan.outside_work_hours else ""
                 return {"text": f"На {plan.date} нет свободных окон{suffix} на {plan.duration_minutes} минут."}
             return {"text": "Свободных вариантов в этом диапазоне не нашлось."}
-        if plan.date:
-            header = f"Свободные окна на {plan.date}"
-            if plan.outside_work_hours:
-                header += " вне рабочего времени"
-            return {
-                "text": "\n".join(
-                    [f"{header}:"] + [f"{s:%H:%M}-{e:%H:%M}" for s, e in slots]
-                )
-            }
-        result = {
-            "text": format_slot_suggestions(
-                slots,
-                duration_minutes=plan.duration_minutes,
-                title=plan.title,
-                outside_work_hours=plan.outside_work_hours,
-            )
-        }
-        if plan.title:
-            pending_slot_selections[chat_id] = PendingSlotSelection(
-                title=plan.title,
-                duration_minutes=plan.duration_minutes,
-                event_group=plan.event_group,
-                candidates=tuple(slots[:8]),
-            )
-            result["reply_markup"] = slot_suggestions_markup(slots[:8])
-        return result
+        return build_slot_selection_result(
+            chat_id=chat_id,
+            message_text=message_text,
+            plan=plan,
+            slots=slots[:8],
+        )
 
     if plan.action == "create_event":
-        return build_event_create_result(chat_id, plan, user_id=user_id)
+        return build_event_create_result(chat_id, plan, message_text=message_text, user_id=user_id)
 
     if plan.action == "update_event":
         return build_event_update_result(chat_id, plan, user_id=user_id)
@@ -1299,7 +1469,13 @@ def handle_natural_language(chat_id: int, message_text: str, user_id: int | None
     }
 
 
-def build_event_create_result(chat_id: int, plan: AssistantPlan, user_id: int | None = None) -> dict:
+def build_event_create_result(
+    chat_id: int,
+    plan: AssistantPlan,
+    *,
+    message_text: str,
+    user_id: int | None = None,
+) -> dict:
     if not plan.date or not plan.time or not plan.title:
         return {
             "text": plan.reply or "Для события нужны дата, время и название.",
