@@ -74,9 +74,9 @@ class EventUpdateDraft:
 @dataclass
 class EventDeleteDraft:
     kind: Literal["event_delete"]
-    event_id: str
     title: str
-    start_at: datetime
+    event_ids: tuple[str, ...]
+    start_ats: tuple[datetime, ...]
 
 
 @dataclass
@@ -226,6 +226,73 @@ def parse_datetime(raw_date: str, raw_time: str) -> datetime:
     return dt.replace(tzinfo=get_timezone(settings.timezone))
 
 
+MONTH_NAME_TO_NUMBER = {
+    "января": 1,
+    "февраля": 2,
+    "марта": 3,
+    "апреля": 4,
+    "мая": 5,
+    "июня": 6,
+    "июля": 7,
+    "августа": 8,
+    "сентября": 9,
+    "октября": 10,
+    "ноября": 11,
+    "декабря": 12,
+}
+
+
+def format_short_date(value: date) -> str:
+    return value.strftime("%d.%m")
+
+
+def extract_explicit_dates(message_text: str) -> list[date]:
+    text = message_text.casefold()
+    current_year = datetime.now(get_timezone(settings.timezone)).year
+    found: list[date] = []
+
+    def append_date(day: str, month: int, year: str | None = None) -> None:
+        resolved_year = int(year) if year else current_year
+        try:
+            found.append(date(resolved_year, month, int(day)))
+        except ValueError:
+            return
+
+    for match in re.finditer(
+        r"\b(?P<day>\d{1,2})[./](?P<month>\d{1,2})(?:[./](?P<year>\d{2,4}))?\b",
+        text,
+    ):
+        year = match.group("year")
+        if year and len(year) == 2:
+            year = f"20{year}"
+        append_date(match.group("day"), int(match.group("month")), year)
+
+    for match in re.finditer(
+        r"\b(?P<days>\d{1,2}(?:\s*(?:,|и|или|/)\s*\d{1,2})*)\s+(?P<month>января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)(?:\s+(?P<year>\d{4}))?\b",
+        text,
+    ):
+        month = MONTH_NAME_TO_NUMBER[match.group("month")]
+        year = match.group("year")
+        for day in re.split(r"\s*(?:,|и|или|/)\s*", match.group("days")):
+            if day:
+                append_date(day, month, year)
+
+    seen: set[date] = set()
+    ordered: list[date] = []
+    for item in found:
+        if item not in seen:
+            seen.add(item)
+            ordered.append(item)
+    return ordered
+
+
+def filter_events_by_dates(events: list[CalendarEvent], dates: list[date]) -> list[CalendarEvent]:
+    if not dates:
+        return events
+    target_dates = {item.isoformat() for item in dates}
+    return [event for event in events if event.start.date().isoformat() in target_dates]
+
+
 def text_is_yes(text: str) -> bool:
     return text.strip().casefold() in {"да", "ага", "yes", "y", "ок", "окей", "подтвердить"}
 
@@ -348,9 +415,9 @@ def resolve_pending_selection(chat_id: int, text: str, user_id: int | None = Non
         assert isinstance(selected, CalendarEvent)
         draft = EventDeleteDraft(
             kind="event_delete",
-            event_id=selected.event_id,
             title=selected.title,
-            start_at=selected.start,
+            event_ids=(selected.event_id,),
+            start_ats=(selected.start,),
         )
         pending_drafts[chat_id] = draft
         return {"text": format_event_delete_draft(draft), "draft": draft}
@@ -950,7 +1017,10 @@ def format_event_update_draft(draft: EventUpdateDraft) -> str:
 
 
 def format_event_delete_draft(draft: EventDeleteDraft) -> str:
-    return f'Удалить событие "{draft.title}" от {draft.start_at:%d.%m.%Y %H:%M}? 🗑'
+    if len(draft.event_ids) == 1:
+        return f'Удалить событие "{draft.title}" от {draft.start_ats[0]:%d.%m.%Y %H:%M}? 🗑'
+    dates_text = ", ".join(f"{item:%d.%m.%Y %H:%M}" for item in draft.start_ats)
+    return f'Удалить {len(draft.event_ids)} событий "{draft.title}"?\n{dates_text}'
 
 
 def format_task_create_draft(draft: TaskCreateDraft) -> str:
@@ -1449,7 +1519,7 @@ def handle_natural_language(chat_id: int, message_text: str, user_id: int | None
         return build_event_update_result(chat_id, plan, user_id=user_id)
 
     if plan.action == "delete_event":
-        return build_event_delete_result(chat_id, plan, user_id=user_id)
+        return build_event_delete_result(chat_id, plan, message_text=message_text, user_id=user_id)
 
     if plan.action == "create_task":
         return build_task_create_result(chat_id, plan, user_id=user_id)
@@ -1535,27 +1605,68 @@ def build_event_update_result(chat_id: int, plan: AssistantPlan, user_id: int | 
     return {"text": format_event_update_draft(draft), "draft": draft}
 
 
-def build_event_delete_result(chat_id: int, plan: AssistantPlan, user_id: int | None = None) -> dict:
+def build_event_delete_result(
+    chat_id: int,
+    plan: AssistantPlan,
+    *,
+    message_text: str = "",
+    user_id: int | None = None,
+) -> dict:
     target = plan.target_title or plan.title
     if not target:
         return {"text": plan.reply or "Уточните, какое событие удалить.", "needs_clarification": True}
-    candidates = get_calendar_service(user_id).search_events(target, parse_date(plan.date) if plan.date else None)
+    target_date = parse_date(plan.date) if plan.date else None
+    candidates = get_calendar_service(user_id).search_events(target, target_date)
     if not candidates:
         return {"text": f'Событие "{target}" не найдено.'}
+    explicit_dates = extract_explicit_dates(message_text)
+    if explicit_dates and not target_date:
+        calendar_service = get_calendar_service(user_id)
+        exact_candidates: list[CalendarEvent] = []
+        seen_event_ids: set[str] = set()
+        for explicit_date in explicit_dates:
+            for event in calendar_service.search_events(target, explicit_date):
+                if event.event_id in seen_event_ids:
+                    continue
+                seen_event_ids.add(event.event_id)
+                exact_candidates.append(event)
+        if exact_candidates:
+            candidates = exact_candidates
+        else:
+            dated_candidates = filter_events_by_dates(candidates, explicit_dates)
+            if dated_candidates:
+                candidates = dated_candidates
     if len(candidates) > 1:
-        pending_selections[chat_id] = PendingSelection(
+        draft = EventDeleteDraft(
             kind="event_delete",
-            plan=plan,
-            candidates=tuple(candidates[:5]),
+            title=candidates[0].title,
+            event_ids=tuple(event.event_id for event in candidates),
+            start_ats=tuple(event.start for event in candidates),
         )
-        options = "\n".join(f"- {e.start:%d.%m %H:%M} {e.title}" for e in candidates[:5])
+        pending_drafts[chat_id] = draft
+        if explicit_dates:
+            dates_text = ", ".join(format_short_date(item) for item in explicit_dates)
+            return {
+                "text": f'Нашла {len(candidates)} записи по датам {dates_text} для "{target}". Подтвердить удаление?',
+                "draft": draft,
+            }
         return {
-            "text": f'Нашлось несколько событий "{target}". Уточните дату:\n{options}',
-            "needs_clarification": True,
+            "text": f'Нашлось несколько событий "{target}". Подтвердить удаление?',
+            "draft": draft,
         }
     event = candidates[0]
-    draft = EventDeleteDraft(kind="event_delete", event_id=event.event_id, title=event.title, start_at=event.start)
+    draft = EventDeleteDraft(
+        kind="event_delete",
+        title=event.title,
+        event_ids=(event.event_id,),
+        start_ats=(event.start,),
+    )
     pending_drafts[chat_id] = draft
+    if explicit_dates and not target_date:
+        return {
+            "text": f"Нашла запись только на {format_short_date(event.start.date())}. Подтвердить удаление?",
+            "draft": draft,
+        }
     return {"text": format_event_delete_draft(draft), "draft": draft}
 
 
@@ -1751,8 +1862,13 @@ async def finalize_pending_draft(update: Update, confirmed: bool, query_message=
             )
             return
         if isinstance(draft, EventDeleteDraft):
-            await asyncio.to_thread(calendar.delete_event, draft.event_id)
-            await safe_reply_text(target_message, f'Событие "{draft.title}" удалено. 🗑')
+            for event_id in draft.event_ids:
+                await asyncio.to_thread(calendar.delete_event, event_id)
+            if len(draft.event_ids) == 1:
+                await safe_reply_text(target_message, f'Событие "{draft.title}" удалено. 🗑')
+            else:
+                dates_text = ", ".join(f"{start_at:%d.%m}" for start_at in draft.start_ats)
+                await safe_reply_text(target_message, f'События "{draft.title}" удалены: {dates_text}. 🗑')
             return
         if isinstance(draft, TaskCreateDraft):
             task_id, tasklist_title = await asyncio.to_thread(

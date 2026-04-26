@@ -53,7 +53,14 @@ class FakeCalendarService:
         return self.conflicts
 
     def search_events(self, title, target_date=None):
-        return self.search_result
+        if target_date is None:
+            return self.search_result
+        title_cf = title.casefold()
+        return [
+            event
+            for event in self.search_result
+            if event.start.date() == target_date and title_cf in event.title.casefold()
+        ]
 
     def create_event(self, title, start_at, duration_minutes, color_id):
         self.created_calls.append(
@@ -213,6 +220,96 @@ def test_build_event_update_result_requests_new_time_for_single_match(monkeypatc
     assert result["needs_clarification"] is True
     assert 'На когда перенести событие "Встреча с клиентом"?' == result["text"]
     assert 123 not in bot.pending_drafts
+
+
+def test_build_event_delete_result_uses_explicit_dates_to_pick_single_match(monkeypatch):
+    calendar = FakeCalendarService()
+    calendar.search_result = [
+        CalendarEvent(
+            event_id="march",
+            title="English Liza",
+            start=datetime(2026, 3, 29, 10, 0, tzinfo=TZ),
+            end=datetime(2026, 3, 29, 11, 0, tzinfo=TZ),
+            html_link="",
+        ),
+        CalendarEvent(
+            event_id="april-5",
+            title="English Liza",
+            start=datetime(2026, 4, 5, 10, 0, tzinfo=TZ),
+            end=datetime(2026, 4, 5, 11, 0, tzinfo=TZ),
+            html_link="",
+        ),
+        CalendarEvent(
+            event_id="april-19",
+            title="English Liza",
+            start=datetime(2026, 4, 19, 10, 0, tzinfo=TZ),
+            end=datetime(2026, 4, 19, 11, 0, tzinfo=TZ),
+            html_link="",
+        ),
+        CalendarEvent(
+            event_id="april-26",
+            title="English Liza",
+            start=datetime(2026, 4, 26, 10, 0, tzinfo=TZ),
+            end=datetime(2026, 4, 26, 11, 0, tzinfo=TZ),
+            html_link="",
+        ),
+    ]
+    monkeypatch.setattr(bot, "calendar_service", calendar)
+
+    result = bot.build_event_delete_result(
+        123,
+        AssistantPlan(action="delete_event", reply="", target_title="English Liza"),
+        message_text="Удали English Liza 12 и 19 апреля",
+    )
+
+    assert result["text"] == "Нашла запись только на 19.04. Подтвердить удаление?"
+    assert isinstance(result["draft"], bot.EventDeleteDraft)
+    assert bot.pending_drafts[123].event_ids == ("april-19",)
+
+
+def test_build_event_delete_result_batches_multiple_requested_dates(monkeypatch):
+    calendar = FakeCalendarService()
+    calendar.search_result = [
+        CalendarEvent(
+            event_id="march",
+            title="English Liza",
+            start=datetime(2026, 3, 29, 10, 0, tzinfo=TZ),
+            end=datetime(2026, 3, 29, 11, 0, tzinfo=TZ),
+            html_link="",
+        ),
+        CalendarEvent(
+            event_id="april-5",
+            title="English Liza",
+            start=datetime(2026, 4, 5, 10, 0, tzinfo=TZ),
+            end=datetime(2026, 4, 5, 11, 0, tzinfo=TZ),
+            html_link="",
+        ),
+        CalendarEvent(
+            event_id="april-19",
+            title="English Liza",
+            start=datetime(2026, 4, 19, 10, 0, tzinfo=TZ),
+            end=datetime(2026, 4, 19, 11, 0, tzinfo=TZ),
+            html_link="",
+        ),
+        CalendarEvent(
+            event_id="april-26",
+            title="English Liza",
+            start=datetime(2026, 4, 26, 10, 0, tzinfo=TZ),
+            end=datetime(2026, 4, 26, 11, 0, tzinfo=TZ),
+            html_link="",
+        ),
+    ]
+    monkeypatch.setattr(bot, "calendar_service", calendar)
+
+    result = bot.build_event_delete_result(
+        123,
+        AssistantPlan(action="delete_event", reply="", target_title="English Liza"),
+        message_text="Удали English Liza 5 и 19 апреля",
+    )
+
+    assert result["text"] == "Нашла 2 записи по датам 05.04, 19.04 для \"English Liza\". Подтвердить удаление?"
+    assert isinstance(result["draft"], bot.EventDeleteDraft)
+    assert bot.pending_drafts[123].event_ids == ("april-5", "april-19")
 
 
 def test_resolve_task_target_reports_multiple_matches(monkeypatch):
@@ -1032,6 +1129,26 @@ def test_finalize_pending_task_create_calls_tasks_service(monkeypatch):
     assert 'Задача создана: "Купить подарок"' in update.message.replies[0]["text"]
 
 
+def test_finalize_pending_event_delete_calls_calendar_service_multiple_times(monkeypatch):
+    calendar = FakeCalendarService()
+    monkeypatch.setattr(bot, "calendar_service", calendar)
+    bot.pending_drafts[123] = bot.EventDeleteDraft(
+        kind="event_delete",
+        title="English Liza",
+        event_ids=("event-1", "event-2"),
+        start_ats=(
+            datetime(2026, 4, 5, 10, 0, tzinfo=TZ),
+            datetime(2026, 4, 19, 10, 0, tzinfo=TZ),
+        ),
+    )
+    update = make_update()
+
+    asyncio.run(bot.finalize_pending_draft(update, confirmed=True))
+
+    assert calendar.deleted_ids == ["event-1", "event-2"]
+    assert "События \"English Liza\" удалены: 05.04, 19.04." in update.message.replies[0]["text"]
+
+
 def test_finalize_pending_draft_cancel_replies_and_clears_state():
     bot.pending_drafts[123] = bot.TaskDeleteDraft(
         kind="task_delete",
@@ -1752,7 +1869,7 @@ def test_text_message_resolves_pending_event_delete_selection(monkeypatch):
     asyncio.run(bot.text_message(update, None))
 
     assert isinstance(bot.pending_drafts[123], bot.EventDeleteDraft)
-    assert bot.pending_drafts[123].event_id == "1"
+    assert bot.pending_drafts[123].event_ids == ("1",)
     assert 'Удалить событие "Встреча"' in update.message.replies[0]["text"]
 
 
