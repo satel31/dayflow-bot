@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from collections.abc import Iterable
 from typing import Any
 
 from dayflow.config import Settings
@@ -77,6 +78,8 @@ class AssistantService:
         "формулировками вроде 'в заметке', 'в описании', 'добавь заметку', 'заметка: ...', "
         "обязательно заполни поле notes этим текстом.\n"
         "Если задача составная, выдели подзадачи в subtasks.\n"
+        "Если в контексте есть список доступных групп событий, выбирай event_group только из него "
+        "и используй точное название группы.\n"
         "Для update/delete target_title это текущее название или главный идентификатор записи.\n"
         "Для update title или new_title используй как новое название, если оно явно есть.\n"
         "Поле reply пиши по-человечески: коротко, тепло, естественно, без канцелярита. "
@@ -137,7 +140,7 @@ class AssistantService:
             return "openrouter"
         return "gemini"
 
-    def plan(self, message_text: str) -> AssistantPlan:
+    def plan(self, message_text: str, event_groups: Iterable[str] = ()) -> AssistantPlan:
         if not self.enabled:
             return AssistantPlan(
                 action="chat",
@@ -148,13 +151,23 @@ class AssistantService:
             )
 
         if self._provider_name() == "openrouter":
-            return self._plan_with_openrouter(message_text)
-        return self._plan_with_gemini(message_text)
+            return self._plan_with_openrouter(message_text, event_groups=event_groups)
+        return self._plan_with_gemini(message_text, event_groups=event_groups)
 
-    def _build_user_prompt(self, message_text: str) -> str:
+    def _build_user_prompt(self, message_text: str, event_groups: Iterable[str] = ()) -> str:
+        groups = tuple(str(group).strip() for group in event_groups if str(group).strip())
+        groups_block = ""
+        if groups:
+            groups_block = (
+                "Доступные группы событий:\n"
+                + "\n".join(f"- {group}" for group in groups)
+                + "\n"
+                "Если группа очевидна, укажи event_group точным названием из списка.\n"
+            )
         return (
             f"Часовой пояс пользователя: {self.settings.timezone}.\n"
             f"Текущие дата и время: {datetime.now().astimezone().isoformat()}.\n"
+            f"{groups_block}"
             "Верни JSON с полями: action, reply, date, time, duration_minutes, preferred_period, "
             "excluded_period, weekday_filter, within_work_hours, title, "
             "target_title, new_title, notes, event_group, task_list, date_from, date_to, "
@@ -162,7 +175,7 @@ class AssistantService:
             f"Сообщение пользователя: {message_text}"
         )
 
-    def _plan_with_openrouter(self, message_text: str) -> AssistantPlan:
+    def _plan_with_openrouter(self, message_text: str, event_groups: Iterable[str] = ()) -> AssistantPlan:
         previous_http_proxy = os.environ.get("HTTP_PROXY")
         previous_https_proxy = os.environ.get("HTTPS_PROXY")
         previous_http_proxy_lower = os.environ.get("http_proxy")
@@ -173,7 +186,7 @@ class AssistantService:
             os.environ["http_proxy"] = self.settings.openrouter_proxy_url
             os.environ["https_proxy"] = self.settings.openrouter_proxy_url
 
-        user_prompt = self._build_user_prompt(message_text)
+        user_prompt = self._build_user_prompt(message_text, event_groups=event_groups)
         try:
             try:
                 client = self._get_openrouter_client()
@@ -203,7 +216,7 @@ class AssistantService:
 
         return self._build_plan_from_payload(payload, message_text)
 
-    def _plan_with_gemini(self, message_text: str) -> AssistantPlan:
+    def _plan_with_gemini(self, message_text: str, event_groups: Iterable[str] = ()) -> AssistantPlan:
 
         try:
             from google import genai
@@ -223,7 +236,7 @@ class AssistantService:
             os.environ["HTTPS_PROXY"] = self.settings.gemini_proxy_url
             os.environ["http_proxy"] = self.settings.gemini_proxy_url
             os.environ["https_proxy"] = self.settings.gemini_proxy_url
-        user_prompt = self._build_user_prompt(message_text)
+        user_prompt = self._build_user_prompt(message_text, event_groups=event_groups)
         try:
             try:
                 client = self._get_client(genai)

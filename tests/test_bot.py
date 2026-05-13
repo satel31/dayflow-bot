@@ -1636,6 +1636,50 @@ def test_assistant_plan_extracts_task_notes_from_message_when_model_misses_them(
     assert plan.notes == "позвонить в магазин"
 
 
+def test_assistant_plan_includes_available_event_groups_in_prompt(monkeypatch):
+    settings = Settings(
+        telegram_bot_token="",
+        timezone="Europe/Moscow",
+        google_calendar_id="primary",
+        google_task_list_id="@default",
+        event_groups_path="data/event_groups.json",
+        google_credentials_path="credentials.json",
+        google_token_path="token.json",
+        google_tokens_dir="data/google_tokens",
+        work_schedule_path="data/work_schedule.json",
+        gemini_api_key="test-key",
+        gemini_model="gemini-2.5-flash",
+        outbound_proxy_url="",
+        telegram_proxy_url="",
+        gemini_proxy_url="",
+        workday_start_hour=9,
+        workday_end_hour=18,
+        gemini_debug_logging=False,
+    )
+    service = AssistantService(settings)
+
+    monkeypatch.setattr(service, "_get_client", lambda _: object())
+
+    seen_prompt = {}
+
+    def fake_structured_response(*args, **kwargs):
+        seen_prompt["user_prompt"] = args[2]
+        return SimpleNamespace(
+            parsed={"action": "create_event", "reply": "ok", "title": "Тренировка", "event_group": "Спорт"},
+            text='{"action":"create_event","reply":"ok","title":"Тренировка","event_group":"Спорт"}',
+        )
+
+    monkeypatch.setattr(service, "_generate_structured_response", fake_structured_response)
+
+    plan = service.plan("Создай запись на тренировку", event_groups=["Работа", "Спорт", "Встречи"])
+
+    assert plan.action == "create_event"
+    assert "Доступные группы событий:" in seen_prompt["user_prompt"]
+    assert "- Работа" in seen_prompt["user_prompt"]
+    assert "- Спорт" in seen_prompt["user_prompt"]
+    assert "- Встречи" in seen_prompt["user_prompt"]
+
+
 def test_assistant_plan_extracts_task_list_notes_and_subtasks_from_structured_task_message(monkeypatch):
     settings = Settings(
         telegram_bot_token="",

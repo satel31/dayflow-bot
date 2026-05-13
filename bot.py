@@ -613,6 +613,10 @@ def build_slot_selection_result(
             outside_work_hours=plan.outside_work_hours,
         )
     }
+    if plan.date and plan.outside_work_hours:
+        result["text"] = f"Свободные окна на {plan.date} вне рабочего времени\n{result['text']}"
+    if len(slots) == 1:
+        result["reply_markup"] = slot_suggestions_markup(slots)
     pending_slot_selections[chat_id] = PendingSlotSelection(
         plan=plan,
         request_text=message_text,
@@ -1440,7 +1444,14 @@ async def process_text(update: Update, text: str) -> None:
 def handle_natural_language(chat_id: int, message_text: str, user_id: int | None = None) -> dict:
     calendar = get_calendar_service(user_id)
     tasks = get_tasks_service(user_id)
-    plan = assistant_service.plan(message_text)
+    plan_fn = assistant_service.plan
+    plan_signature = inspect.signature(plan_fn).parameters
+    if "event_groups" in plan_signature or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in plan_signature.values()
+    ):
+        plan = plan_fn(message_text, event_groups=group_store.list_groups().keys())
+    else:
+        plan = plan_fn(message_text)
     plan = apply_message_preferences(message_text, plan)
     plan = normalize_plan(plan)
     fallback_update_plan = infer_event_update_plan(message_text, plan)
