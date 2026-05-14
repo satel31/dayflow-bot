@@ -312,6 +312,44 @@ def test_build_event_delete_result_batches_multiple_requested_dates(monkeypatch)
     assert bot.pending_drafts[123].event_ids == ("april-5", "april-19")
 
 
+def test_resolve_pending_event_delete_selection_uses_multiple_dates(monkeypatch):
+    calendar = FakeCalendarService()
+    monkeypatch.setattr(bot, "calendar_service", calendar)
+    plan = AssistantPlan(action="delete_event", reply="", target_title="English Liza")
+    first = CalendarEvent(
+        event_id="april-6",
+        title="English Liza",
+        start=datetime(2026, 4, 6, 10, 0, tzinfo=TZ),
+        end=datetime(2026, 4, 6, 11, 0, tzinfo=TZ),
+        html_link="",
+    )
+    second = CalendarEvent(
+        event_id="april-9",
+        title="English Liza",
+        start=datetime(2026, 4, 9, 10, 0, tzinfo=TZ),
+        end=datetime(2026, 4, 9, 11, 0, tzinfo=TZ),
+        html_link="",
+    )
+    third = CalendarEvent(
+        event_id="april-16",
+        title="English Liza",
+        start=datetime(2026, 4, 16, 10, 0, tzinfo=TZ),
+        end=datetime(2026, 4, 16, 11, 0, tzinfo=TZ),
+        html_link="",
+    )
+    bot.pending_selections[123] = bot.PendingSelection(
+        kind="event_delete",
+        plan=plan,
+        candidates=(first, second, third),
+    )
+
+    result = bot.resolve_pending_selection(123, "6 апреля и 9 апреля")
+
+    assert isinstance(result["draft"], bot.EventDeleteDraft)
+    assert bot.pending_drafts[123].event_ids == ("april-6", "april-9")
+    assert "Удалить 2 событий" in result["text"]
+
+
 def test_resolve_task_target_reports_multiple_matches(monkeypatch):
     tasks = FakeTasksService()
     tasks.matches = [make_task("1", "Отчет"), make_task("2", "Отчет", "Work")]

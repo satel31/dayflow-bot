@@ -293,6 +293,34 @@ def filter_events_by_dates(events: list[CalendarEvent], dates: list[date]) -> li
     return [event for event in events if event.start.date().isoformat() in target_dates]
 
 
+def collect_event_delete_matches_for_dates(
+    pending: PendingSelection,
+    dates: list[date],
+    *,
+    user_id: int | None = None,
+) -> list[CalendarEvent]:
+    target = pending.plan.target_title or pending.plan.title
+    pending_events = [event for event in pending.candidates if isinstance(event, CalendarEvent)]
+    if not target and pending_events:
+        target = pending_events[0].title
+    if not target:
+        return []
+
+    calendar = get_calendar_service(user_id)
+    matches: list[CalendarEvent] = []
+    seen_event_ids: set[str] = set()
+    for target_date in dates:
+        date_matches = [event for event in pending_events if event.start.date() == target_date]
+        if not date_matches:
+            date_matches = calendar.search_events(target, target_date)
+        for event in date_matches:
+            if event.event_id in seen_event_ids:
+                continue
+            seen_event_ids.add(event.event_id)
+            matches.append(event)
+    return matches
+
+
 def text_is_yes(text: str) -> bool:
     return text.strip().casefold() in {"да", "ага", "yes", "y", "ок", "окей", "подтвердить"}
 
@@ -404,6 +432,21 @@ def resolve_pending_selection(chat_id: int, text: str, user_id: int | None = Non
     pending = pending_selections.get(chat_id)
     if not pending:
         return None
+    if pending.kind == "event_delete":
+        explicit_dates = extract_explicit_dates(text)
+        if explicit_dates:
+            matches = collect_event_delete_matches_for_dates(pending, explicit_dates, user_id=user_id)
+            if matches:
+                pending_selections.pop(chat_id, None)
+                pending_clarifications.pop(chat_id, None)
+                draft = EventDeleteDraft(
+                    kind="event_delete",
+                    title=matches[0].title,
+                    event_ids=tuple(event.event_id for event in matches),
+                    start_ats=tuple(event.start for event in matches),
+                )
+                pending_drafts[chat_id] = draft
+                return {"text": format_event_delete_draft(draft), "draft": draft}
     index = extract_selection_index(text, len(pending.candidates))
     if index is None:
         return None
