@@ -1165,6 +1165,8 @@ def test_finalize_pending_task_create_calls_tasks_service(monkeypatch):
         }
     ]
     assert 'Задача создана: "Купить подарок"' in update.message.replies[0]["text"]
+    assert "Task ID" not in update.message.replies[0]["text"]
+    assert "task-1" not in update.message.replies[0]["text"]
 
 
 def test_finalize_pending_event_delete_calls_calendar_service_multiple_times(monkeypatch):

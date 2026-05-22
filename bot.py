@@ -1925,7 +1925,7 @@ async def finalize_pending_draft(update: Update, confirmed: bool, query_message=
                 await safe_reply_text(target_message, f'События "{draft.title}" удалены: {dates_text}. 🗑')
             return
         if isinstance(draft, TaskCreateDraft):
-            task_id, tasklist_title = await asyncio.to_thread(
+            _, tasklist_title = await asyncio.to_thread(
                 tasks.create_task_with_subtasks,
                 draft.title,
                 draft.due_date,
@@ -1935,7 +1935,7 @@ async def finalize_pending_draft(update: Update, confirmed: bool, query_message=
             )
             await safe_reply_text(
                 target_message,
-                f'Задача создана: "{draft.title}"\nСписок: {tasklist_title}\nTask ID: {task_id}\nГотово ✅'
+                f'Задача создана: "{draft.title}"\nСписок: {tasklist_title}\nГотово ✅'
             )
             return
         if isinstance(draft, TaskUpdateDraft):
