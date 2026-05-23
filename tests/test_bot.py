@@ -385,6 +385,27 @@ def test_build_task_create_result_uses_default_task_list(monkeypatch):
     assert bot.pending_drafts[123] == draft
 
 
+def test_build_task_create_result_capitalizes_title_and_notes(monkeypatch):
+    tasks = FakeTasksService()
+    monkeypatch.setattr(bot, "tasks_service", tasks)
+
+    result = bot.build_task_create_result(
+        123,
+        AssistantPlan(
+            action="create_task",
+            reply="",
+            title="записаться к врачу",
+            notes="позвонить в клинику после 18:00",
+        ),
+    )
+
+    draft = result["draft"]
+    assert draft.title == "Записаться к врачу"
+    assert draft.notes == "Позвонить в клинику после 18:00"
+    assert 'Добавим задачу "Записаться к врачу"' in result["text"]
+    assert "Описание: Позвонить в клинику после 18:00" in result["text"]
+
+
 def test_build_task_complete_result_excludes_completed_tasks(monkeypatch):
     tasks = FakeTasksService()
     tasks.matches = [

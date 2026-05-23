@@ -226,6 +226,15 @@ def parse_datetime(raw_date: str, raw_time: str) -> datetime:
     return dt.replace(tzinfo=get_timezone(settings.timezone))
 
 
+def uppercase_first_letter(text: str) -> str:
+    for index, char in enumerate(text):
+        if char.isalpha():
+            if char.islower():
+                return f"{text[:index]}{char.upper()}{text[index + 1:]}"
+            return text
+    return text
+
+
 MONTH_NAME_TO_NUMBER = {
     "января": 1,
     "февраля": 2,
@@ -1753,9 +1762,9 @@ def build_task_create_result(chat_id: int, plan: AssistantPlan, user_id: int | N
         return {"text": f"Не удалось определить список задач: {exc}"}
     draft = TaskCreateDraft(
         kind="task_create",
-        title=plan.title,
+        title=uppercase_first_letter(plan.title),
         due_date=parse_date(plan.date) if plan.date else None,
-        notes=plan.notes,
+        notes=uppercase_first_letter(plan.notes),
         task_list_name=task_list_name,
         subtasks=plan.subtasks,
     )
