@@ -453,6 +453,28 @@ def test_build_task_update_result_excludes_completed_tasks(monkeypatch):
     assert result["text"].count("Оплатить интернет") == 4
 
 
+def test_build_task_update_result_hides_unchanged_title_for_notes_only(monkeypatch):
+    tasks = FakeTasksService()
+    tasks.matches = [make_task("1", "отчет", "Работа")]
+    monkeypatch.setattr(bot, "tasks_service", tasks)
+
+    result = bot.build_task_update_result(
+        123,
+        AssistantPlan(
+            action="update_task",
+            reply="",
+            target_title="отчет",
+            notes="собрать новые цифры",
+        ),
+    )
+
+    assert result["draft"].new_title == "отчет"
+    assert 'Обновим задачу "отчет"' in result["text"]
+    assert "Новое название" not in result["text"]
+    assert "Список: Работа" in result["text"]
+    assert "Описание: собрать новые цифры" in result["text"]
+
+
 def test_build_task_delete_result_excludes_completed_tasks(monkeypatch):
     tasks = FakeTasksService()
     tasks.matches = [

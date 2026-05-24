@@ -542,7 +542,7 @@ def resolve_pending_selection(chat_id: int, text: str, user_id: int | None = Non
             task_id=selected.task_id,
             task_list_name=selected.tasklist_title,
             original_title=selected.title,
-            new_title=pending.plan.new_title or pending.plan.title or selected.title,
+            new_title=pending.plan.new_title or selected.title,
             due_date=due_date,
             notes=pending.plan.notes if pending.plan.notes else selected.notes,
         )
@@ -1094,9 +1094,10 @@ def format_task_create_draft(draft: TaskCreateDraft) -> str:
 def format_task_update_draft(draft: TaskUpdateDraft) -> str:
     lines = [
         f'Обновим задачу "{draft.original_title}" ✍️',
-        f'Новое название: "{draft.new_title}"',
         f"Список: {draft.task_list_name}",
     ]
+    if draft.new_title != draft.original_title:
+        lines.insert(1, f'Новое название: "{draft.new_title}"')
     if draft.due_date:
         lines.append(f"Срок: {draft.due_date:%d.%m.%Y}")
     if draft.notes:
@@ -1802,7 +1803,7 @@ def build_task_update_result(chat_id: int, plan: AssistantPlan, user_id: int | N
         task_id=match.task_id,
         task_list_name=match.tasklist_title,
         original_title=match.title,
-        new_title=plan.new_title or plan.title or match.title,
+        new_title=plan.new_title or match.title,
         due_date=parse_date(plan.date) if plan.date else (date.fromisoformat(match.due[:10]) if match.due else None),
         notes=plan.notes if plan.notes else match.notes,
     )
