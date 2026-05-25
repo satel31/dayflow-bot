@@ -107,9 +107,25 @@ class FakeCalendarService:
 class FakeTasksService:
     def __init__(self) -> None:
         self.matches: list[TaskItem] = []
+        self.items: list[TaskItem] = []
         self.resolve_result = {"id": "default", "title": "Inbox"}
         self.created_calls: list[dict] = []
+        self.list_calls: list[dict] = []
         self.search_calls: list[dict] = []
+
+    def list_tasks(self, tasklist_name=None, show_completed=True):
+        self.list_calls.append(
+            {
+                "tasklist_name": tasklist_name,
+                "show_completed": show_completed,
+            }
+        )
+        return [
+            item
+            for item in self.items
+            if (tasklist_name is None or item.tasklist_title == tasklist_name)
+            and (show_completed or item.status != "completed")
+        ]
 
     def search_tasks(self, title, tasklist_name=None, show_completed=True):
         self.search_calls.append(
@@ -145,14 +161,20 @@ def make_event(event_id: str, title: str, hour: int) -> CalendarEvent:
     return CalendarEvent(event_id=event_id, title=title, start=start, end=end, html_link="")
 
 
-def make_task(task_id: str, title: str, tasklist_title: str = "Inbox", status: str = "needsAction") -> TaskItem:
+def make_task(
+    task_id: str,
+    title: str,
+    tasklist_title: str = "Inbox",
+    status: str = "needsAction",
+    due: str = "",
+) -> TaskItem:
     return TaskItem(
         task_id=task_id,
         title=title,
         tasklist_id="list-1",
         tasklist_title=tasklist_title,
         notes="",
-        due="",
+        due=due,
         status=status,
     )
 
@@ -494,6 +516,43 @@ def test_build_task_delete_result_excludes_completed_tasks(monkeypatch):
     assert tasks.search_calls[-1]["show_completed"] is False
     assert "Нашлось несколько задач" in result["text"]
     assert result["text"].count("Оплатить интернет") == 4
+
+
+def test_handle_natural_language_routes_task_list_request_to_tasks_when_model_returns_events(monkeypatch):
+    tasks = FakeTasksService()
+    tasks.items = [
+        make_task("1", "Оплатить интернет", due="2026-03-24T12:00:00+03:00"),
+        make_task("2", "Купить подарок", due="2026-03-25T12:00:00+03:00"),
+        make_task("3", "Старая задача", status="completed", due="2026-03-24T12:00:00+03:00"),
+    ]
+    monkeypatch.setattr(bot, "tasks_service", tasks)
+    monkeypatch.setattr(
+        bot,
+        "assistant_service",
+        SimpleNamespace(plan=lambda _: AssistantPlan(action="list_events", reply="", date="2026-03-24")),
+    )
+
+    result = bot.handle_natural_language(123, "Какие у меня задачи на сегодня?")
+
+    assert "Оплатить интернет" in result["text"]
+    assert "Купить подарок" not in result["text"]
+    assert "Старая задача" not in result["text"]
+    assert tasks.list_calls == [{"tasklist_name": None, "show_completed": False}]
+
+
+def test_handle_natural_language_lists_tasks_for_direct_list_tasks_plan(monkeypatch):
+    tasks = FakeTasksService()
+    tasks.items = [make_task("1", "Собрать документы", "Работа", due="2026-03-24T12:00:00+03:00")]
+    monkeypatch.setattr(bot, "tasks_service", tasks)
+    monkeypatch.setattr(
+        bot,
+        "assistant_service",
+        SimpleNamespace(plan=lambda _: AssistantPlan(action="list_tasks", reply="", date="2026-03-24")),
+    )
+
+    result = bot.handle_natural_language(123, "Покажи задачи на сегодня")
+
+    assert result["text"] == "Задачи на 2026-03-24:\n- [Работа] Собрать документы"
 
 
 def test_handle_natural_language_suggests_slots_for_flexible_event_request(monkeypatch):

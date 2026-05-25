@@ -302,6 +302,89 @@ def filter_events_by_dates(events: list[CalendarEvent], dates: list[date]) -> li
     return [event for event in events if event.start.date().isoformat() in target_dates]
 
 
+def is_task_list_request(message_text: str) -> bool:
+    lowered = message_text.casefold()
+    if not any(token in lowered for token in ("задач", "todo", "туду")):
+        return False
+    if any(
+        phrase in lowered
+        for phrase in (
+            "создай",
+            "создать",
+            "добавь",
+            "добавить",
+            "измени",
+            "изменить",
+            "обнови",
+            "обновить",
+            "удали",
+            "удалить",
+            "отметь",
+            "отметить",
+            "выполненн",
+        )
+    ):
+        return False
+    return any(
+        phrase in lowered
+        for phrase in (
+            "какие",
+            "какая",
+            "какой",
+            "что у меня",
+            "покажи",
+            "список",
+            "на сегодня",
+            "на завтра",
+            "сегодня",
+            "завтра",
+        )
+    )
+
+
+def infer_relative_date(message_text: str) -> date | None:
+    lowered = message_text.casefold()
+    today = datetime.now(get_timezone(settings.timezone)).date()
+    if "послезавтра" in lowered:
+        return today + timedelta(days=2)
+    if "завтра" in lowered:
+        return today + timedelta(days=1)
+    if "сегодня" in lowered:
+        return today
+    return None
+
+
+def task_due_date(task: TaskItem) -> date | None:
+    if not task.due:
+        return None
+    try:
+        return date.fromisoformat(task.due[:10])
+    except ValueError:
+        return None
+
+
+def filter_tasks_by_date(tasks: list[TaskItem], target_date: date | None) -> list[TaskItem]:
+    if target_date is None:
+        return tasks
+    return [task for task in tasks if task_due_date(task) == target_date]
+
+
+def format_task_list(items: list[TaskItem], target_date: date | None = None) -> str:
+    if not items:
+        if target_date:
+            return f"На {target_date.isoformat()} задач нет."
+        return "Задач нет."
+    header = f"Задачи на {target_date.isoformat()}:" if target_date else "Задачи:"
+    lines = [header]
+    for item in items:
+        line = f"- [{item.tasklist_title}] {item.title}"
+        due = task_due_date(item)
+        if due and target_date is None:
+            line += f" ({due:%d.%m.%Y})"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def collect_event_delete_matches_for_dates(
     pending: PendingSelection,
     dates: list[date],
@@ -1514,6 +1597,10 @@ def handle_natural_language(chat_id: int, message_text: str, user_id: int | None
     if flexible_event_plan:
         plan = flexible_event_plan
 
+    if plan.action in {"chat", "list_events"} and is_task_list_request(message_text):
+        inferred_date = infer_relative_date(message_text)
+        plan = replace(plan, action="list_tasks", date=plan.date or (inferred_date.isoformat() if inferred_date else ""))
+
     if plan.action == "list_events":
         if not plan.date:
             return {"text": plan.reply or "Уточните дату.", "needs_clarification": True}
@@ -1521,6 +1608,11 @@ def handle_natural_language(chat_id: int, message_text: str, user_id: int | None
         if not events:
             return {"text": f"На {plan.date} событий нет."}
         return {"text": "\n".join(f"{e.start:%H:%M}-{e.end:%H:%M}  {e.title}" for e in events)}
+
+    if plan.action == "list_tasks":
+        target_date = parse_date(plan.date) if plan.date else infer_relative_date(message_text)
+        items = tasks.list_tasks(tasklist_name=plan.task_list or None, show_completed=False)
+        return {"text": format_task_list(filter_tasks_by_date(items, target_date), target_date)}
 
     if plan.action == "find_free_slots":
         pending_slot_selections.pop(chat_id, None)

@@ -46,10 +46,11 @@ class AssistantService:
     _SYSTEM_INSTRUCTION = (
         "Ты DayFlow, Telegram-ассистент для личного планирования.\n"
         "Определи ровно одно действие по сообщению пользователя.\n"
-        "Доступные действия: chat, list_events, find_free_slots, create_event, "
+        "Доступные действия: chat, list_events, list_tasks, find_free_slots, create_event, "
         "update_event, delete_event, create_task, update_task, delete_task, complete_task.\n"
         "Правила выбора действия:\n"
         "- расписание на день -> list_events\n"
+        "- список задач на день -> list_tasks\n"
         "- свободное окно, слот, время -> find_free_slots\n"
         "- запланировать встречу, созвон, тренировку, визит -> create_event\n"
         "- перенести, изменить, переименовать событие -> update_event\n"
@@ -95,6 +96,7 @@ class AssistantService:
                 "enum": [
                     "chat",
                     "list_events",
+                    "list_tasks",
                     "find_free_slots",
                     "create_event",
                     "update_event",
