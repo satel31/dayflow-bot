@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from datetime import date, datetime
 from types import SimpleNamespace
@@ -8,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 import bot
-from dayflow.assistant_service import AssistantPlan, AssistantService, AssistantServiceError
+from dayflow.assistant_service import AssistantPlan, AssistantService, AssistantServiceError, AssistantSubtask
 from dayflow.calendar_service import CalendarEvent
 from dayflow.calendar_service import GoogleCalendarService
 from dayflow.config import Settings
@@ -110,6 +111,8 @@ class FakeTasksService:
         self.items: list[TaskItem] = []
         self.resolve_result = {"id": "default", "title": "Inbox"}
         self.created_calls: list[dict] = []
+        self.updated_calls: list[dict] = []
+        self.replaced_subtasks_calls: list[dict] = []
         self.list_calls: list[dict] = []
         self.search_calls: list[dict] = []
 
@@ -153,6 +156,35 @@ class FakeTasksService:
             }
         )
         return "task-1", task_list_name
+
+    def update_task(self, task_id, task_list_name, *, new_title=None, due_date=None, notes=None):
+        self.updated_calls.append(
+            {
+                "task_id": task_id,
+                "task_list_name": task_list_name,
+                "new_title": new_title,
+                "due_date": due_date,
+                "notes": notes,
+            }
+        )
+        return TaskItem(
+            task_id=task_id,
+            title=new_title or "Updated",
+            tasklist_id="list-1",
+            tasklist_title=task_list_name,
+            notes=notes or "",
+            due="",
+            status="needsAction",
+        )
+
+    def replace_subtasks(self, parent_task_id, task_list_name, subtasks):
+        self.replaced_subtasks_calls.append(
+            {
+                "parent_task_id": parent_task_id,
+                "task_list_name": task_list_name,
+                "subtasks": subtasks,
+            }
+        )
 
 
 def make_event(event_id: str, title: str, hour: int) -> CalendarEvent:
@@ -495,6 +527,41 @@ def test_build_task_update_result_hides_unchanged_title_for_notes_only(monkeypat
     assert "Новое название" not in result["text"]
     assert "Список: Работа" in result["text"]
     assert "Описание: собрать новые цифры" in result["text"]
+
+
+def test_build_task_update_result_keeps_subtasks_in_draft(monkeypatch):
+    tasks = FakeTasksService()
+    tasks.matches = [make_task("1", "PRIOS-1810", "Работа")]
+    monkeypatch.setattr(bot, "tasks_service", tasks)
+
+    result = bot.build_task_update_result(
+        123,
+        AssistantPlan(
+            action="update_task",
+            reply="",
+            target_title="PRIOS-1810",
+            subtasks=(
+                AssistantSubtask(
+                    title="Проектный read-model в Postgres",
+                    notes="Вынести чтение проекта в единый Postgres query-layer.",
+                ),
+                AssistantSubtask(title="Проверить"),
+            ),
+        ),
+    )
+
+    draft = result["draft"]
+    assert draft.subtasks == (
+        AssistantSubtask(
+            title="Проектный read-model в Postgres",
+            notes="Вынести чтение проекта в единый Postgres query-layer.",
+        ),
+        AssistantSubtask(title="Проверить"),
+    )
+    assert "Подзадачи:" in result["text"]
+    assert "- Проектный read-model в Postgres" in result["text"]
+    assert "Описание: Вынести чтение проекта в единый Postgres query-layer." in result["text"]
+    assert "- Проверить" in result["text"]
 
 
 def test_build_task_delete_result_excludes_completed_tasks(monkeypatch):
@@ -1271,6 +1338,54 @@ def test_finalize_pending_task_create_calls_tasks_service(monkeypatch):
     assert "task-1" not in update.message.replies[0]["text"]
 
 
+def test_finalize_pending_task_update_replaces_subtasks(monkeypatch):
+    tasks = FakeTasksService()
+    monkeypatch.setattr(bot, "tasks_service", tasks)
+    bot.pending_drafts[123] = bot.TaskUpdateDraft(
+        kind="task_update",
+        task_id="task-1",
+        task_list_name="Работа",
+        original_title="PRIOS-1810",
+        new_title="PRIOS-1810",
+        due_date=None,
+        notes="",
+        subtasks=(
+            AssistantSubtask(
+                title="Проектный read-model в Postgres",
+                notes="Вынести чтение проекта в единый Postgres query-layer.",
+            ),
+            AssistantSubtask(title="Проверить"),
+        ),
+    )
+    update = make_update()
+
+    asyncio.run(bot.finalize_pending_draft(update, confirmed=True))
+
+    assert tasks.updated_calls == [
+        {
+            "task_id": "task-1",
+            "task_list_name": "Работа",
+            "new_title": "PRIOS-1810",
+            "due_date": None,
+            "notes": "",
+        }
+    ]
+    assert tasks.replaced_subtasks_calls == [
+        {
+            "parent_task_id": "task-1",
+            "task_list_name": "Работа",
+            "subtasks": [
+                AssistantSubtask(
+                    title="Проектный read-model в Postgres",
+                    notes="Вынести чтение проекта в единый Postgres query-layer.",
+                ),
+                AssistantSubtask(title="Проверить"),
+            ],
+        }
+    ]
+    assert 'Задача обновлена: "PRIOS-1810"' in update.message.replies[0]["text"]
+
+
 def test_finalize_pending_event_delete_calls_calendar_service_multiple_times(monkeypatch):
     calendar = FakeCalendarService()
     monkeypatch.setattr(bot, "calendar_service", calendar)
@@ -1430,6 +1545,45 @@ def test_assistant_plan_uses_openrouter_when_api_key_present(monkeypatch):
 
     assert plan.action == "create_task"
     assert plan.title == "купить подарок"
+
+
+def test_openrouter_generation_requests_json_with_larger_token_limit():
+    settings = Settings(
+        telegram_bot_token="",
+        timezone="Europe/Moscow",
+        google_calendar_id="primary",
+        google_task_list_id="@default",
+        event_groups_path="data/event_groups.json",
+        google_credentials_path="credentials.json",
+        google_token_path="token.json",
+        google_tokens_dir="data/google_tokens",
+        work_schedule_path="data/work_schedule.json",
+        gemini_api_key="",
+        gemini_model="gemini-2.5-flash",
+        outbound_proxy_url="",
+        telegram_proxy_url="",
+        gemini_proxy_url="",
+        workday_start_hour=9,
+        workday_end_hour=18,
+        gemini_debug_logging=False,
+        openrouter_api_key="openrouter-key",
+        openrouter_model="openai/gpt-4o-mini",
+        openrouter_base_url="https://openrouter.ai/api/v1",
+        openrouter_proxy_url="",
+    )
+    service = AssistantService(settings)
+    seen_kwargs = {}
+
+    def fake_create(**kwargs):
+        seen_kwargs.update(kwargs)
+        return SimpleNamespace(choices=[])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create)))
+
+    service._generate_openrouter_response(client, "Создай длинную задачу с подзадачами")
+
+    assert seen_kwargs["max_tokens"] >= 1000
+    assert seen_kwargs["response_format"] == {"type": "json_object"}
 
 
 def test_assistant_plan_normalizes_null_fields_from_model(monkeypatch):
@@ -1873,7 +2027,10 @@ def test_assistant_plan_extracts_task_list_notes_and_subtasks_from_structured_ta
     assert plan.title == "подготовить отчет"
     assert plan.task_list == "Работа"
     assert plan.notes == "собрать цифры"
-    assert plan.subtasks == ("написать черновик", "проверить данные")
+    assert plan.subtasks == (
+        AssistantSubtask(title="написать черновик"),
+        AssistantSubtask(title="проверить данные"),
+    )
 
 
 def test_assistant_plan_does_not_change_task_title_when_only_notes_are_updated(monkeypatch):
@@ -1975,6 +2132,65 @@ def test_assistant_plan_update_task_with_task_list_does_not_treat_list_as_new_ti
     assert plan.notes == "собрать финальные цифры"
 
 
+def test_assistant_plan_update_task_keeps_structured_subtask_notes(monkeypatch):
+    settings = Settings(
+        telegram_bot_token="",
+        timezone="Europe/Moscow",
+        google_calendar_id="primary",
+        google_task_list_id="@default",
+        event_groups_path="data/event_groups.json",
+        google_credentials_path="credentials.json",
+        google_token_path="token.json",
+        google_tokens_dir="data/google_tokens",
+        work_schedule_path="data/work_schedule.json",
+        gemini_api_key="",
+        gemini_model="gemini-2.5-flash",
+        outbound_proxy_url="",
+        telegram_proxy_url="",
+        gemini_proxy_url="",
+        workday_start_hour=9,
+        workday_end_hour=18,
+        gemini_debug_logging=False,
+        openrouter_api_key="openrouter-key",
+        openrouter_model="openai/gpt-4o-mini",
+        openrouter_base_url="https://openrouter.ai/api/v1",
+        openrouter_proxy_url="",
+    )
+    service = AssistantService(settings)
+
+    monkeypatch.setattr(service, "_get_openrouter_client", lambda: object())
+    monkeypatch.setattr(
+        service,
+        "_generate_openrouter_response",
+        lambda *args, **kwargs: SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=(
+                            '{"action":"update_task","reply":"ok","title":"PRIOS-1810",'
+                            '"subtasks":[{"title":"Проектный read-model в Postgres",'
+                            '"notes":"Вынести чтение проекта в единый Postgres query-layer."},'
+                            '{"title":"Проверить"}]}'
+                        )
+                    )
+                )
+            ]
+        ),
+    )
+
+    plan = service.plan("Измени задачу PRIOS-1810\nПодзадачи:\nПроектный read-model в Postgres")
+
+    assert plan.action == "update_task"
+    assert plan.target_title == "PRIOS-1810"
+    assert plan.subtasks == (
+        AssistantSubtask(
+            title="Проектный read-model в Postgres",
+            notes="Вынести чтение проекта в единый Postgres query-layer.",
+        ),
+        AssistantSubtask(title="Проверить"),
+    )
+
+
 def test_process_text_returns_friendly_quota_error(monkeypatch):
     def fake_handle_natural_language(chat_id: int, message_text: str) -> dict:
         raise AssistantServiceError(
@@ -1996,6 +2212,29 @@ def test_process_text_returns_friendly_quota_error(monkeypatch):
             "reply_markup": None,
         }
     ]
+
+
+def test_process_text_logs_assistant_service_error_cause(monkeypatch, caplog):
+    def fake_handle_natural_language(chat_id: int, message_text: str) -> dict:
+        cause = RuntimeError("openrouter raw failure: invalid JSON response")
+        raise AssistantServiceError(
+            "Не могу обработать свободный запрос из-за ошибки OpenRouter. Попробуйте позже."
+        ) from cause
+
+    monkeypatch.setattr(bot, "handle_natural_language", fake_handle_natural_language)
+    caplog.set_level(logging.ERROR, logger="bot")
+    update = make_update()
+
+    asyncio.run(bot.process_text(update, "Обнови большую задачу с описанием и подзадачами"))
+
+    assert update.message.replies == [
+        {
+            "text": "Не могу обработать свободный запрос из-за ошибки OpenRouter. Попробуйте позже.",
+            "reply_markup": None,
+        }
+    ]
+    assert "Assistant service failed to process natural language request" in caplog.text
+    assert "openrouter raw failure: invalid JSON response" in caplog.text
 
 
 def test_handle_natural_language_falls_back_to_event_lookup_for_missing_move_time(monkeypatch):

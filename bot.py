@@ -19,7 +19,7 @@ from telegram.ext import (
     filters,
 )
 
-from dayflow.assistant_service import AssistantPlan, AssistantService, AssistantServiceError
+from dayflow.assistant_service import AssistantPlan, AssistantService, AssistantServiceError, AssistantSubtask
 from dayflow.auth import (
     GoogleAuthRequiredError,
     GoogleAuthSession,
@@ -86,7 +86,7 @@ class TaskCreateDraft:
     due_date: date | None
     notes: str
     task_list_name: str
-    subtasks: tuple[str, ...]
+    subtasks: tuple[AssistantSubtask, ...]
 
 
 @dataclass
@@ -98,6 +98,7 @@ class TaskUpdateDraft:
     new_title: str
     due_date: date | None
     notes: str
+    subtasks: tuple[AssistantSubtask, ...] = ()
 
 
 @dataclass
@@ -233,6 +234,29 @@ def uppercase_first_letter(text: str) -> str:
                 return f"{text[:index]}{char.upper()}{text[index + 1:]}"
             return text
     return text
+
+
+def normalize_subtask_drafts(subtasks) -> tuple[AssistantSubtask, ...]:
+    normalized: list[AssistantSubtask] = []
+    for item in subtasks or ():
+        if isinstance(item, AssistantSubtask):
+            subtask = item
+        else:
+            subtask = AssistantSubtask(title=str(item).strip())
+        if subtask.title.strip():
+            normalized.append(
+                AssistantSubtask(
+                    title=subtask.title.strip(),
+                    notes=subtask.notes.strip(),
+                )
+            )
+    return tuple(normalized)
+
+
+def format_subtask_line(subtask: AssistantSubtask) -> str:
+    if subtask.notes:
+        return f"- {subtask.title}\n  Описание: {subtask.notes}"
+    return f"- {subtask.title}"
 
 
 MONTH_NAME_TO_NUMBER = {
@@ -1170,7 +1194,7 @@ def format_task_create_draft(draft: TaskCreateDraft) -> str:
         lines.append(f"Описание: {draft.notes}")
     if draft.subtasks:
         lines.append("Подзадачи:")
-        lines.extend(f"- {item}" for item in draft.subtasks)
+        lines.extend(format_subtask_line(item) for item in draft.subtasks)
     return "\n".join(lines)
 
 
@@ -1185,6 +1209,9 @@ def format_task_update_draft(draft: TaskUpdateDraft) -> str:
         lines.append(f"Срок: {draft.due_date:%d.%m.%Y}")
     if draft.notes:
         lines.append(f"Описание: {draft.notes}")
+    if draft.subtasks:
+        lines.append("Подзадачи:")
+        lines.extend(format_subtask_line(item) for item in draft.subtasks)
     return "\n".join(lines)
 
 
@@ -1550,6 +1577,7 @@ async def process_text(update: Update, text: str) -> None:
         else:
             result = await asyncio.to_thread(handle_natural_language, chat_id, text)
     except AssistantServiceError as exc:
+        logger.exception("Assistant service failed to process natural language request")
         await safe_reply_text(update.message, str(exc))
         return
     except GoogleAuthRequiredError as exc:
@@ -1859,7 +1887,7 @@ def build_task_create_result(chat_id: int, plan: AssistantPlan, user_id: int | N
         due_date=parse_date(plan.date) if plan.date else None,
         notes=uppercase_first_letter(plan.notes),
         task_list_name=task_list_name,
-        subtasks=plan.subtasks,
+        subtasks=normalize_subtask_drafts(plan.subtasks),
     )
     pending_drafts[chat_id] = draft
     return {"text": format_task_create_draft(draft), "draft": draft}
@@ -1898,6 +1926,7 @@ def build_task_update_result(chat_id: int, plan: AssistantPlan, user_id: int | N
         new_title=plan.new_title or match.title,
         due_date=parse_date(plan.date) if plan.date else (date.fromisoformat(match.due[:10]) if match.due else None),
         notes=plan.notes if plan.notes else match.notes,
+        subtasks=normalize_subtask_drafts(plan.subtasks),
     )
     pending_drafts[chat_id] = draft
     return {"text": format_task_update_draft(draft), "draft": draft}
@@ -2049,6 +2078,13 @@ async def finalize_pending_draft(update: Update, confirmed: bool, query_message=
                 due_date=draft.due_date,
                 notes=draft.notes,
             )
+            if draft.subtasks:
+                await asyncio.to_thread(
+                    tasks.replace_subtasks,
+                    draft.task_id,
+                    draft.task_list_name,
+                    list(draft.subtasks),
+                )
             await safe_reply_text(
                 target_message,
                 f'Задача обновлена: "{updated.title}"\nСписок: {updated.tasklist_title}\nГотово ✨'

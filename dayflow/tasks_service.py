@@ -5,6 +5,7 @@ from datetime import date, datetime, time
 from googleapiclient.discovery import build
 
 from dayflow.auth import load_google_credentials
+from dayflow.assistant_service import AssistantSubtask
 from dayflow.config import Settings
 from dayflow.timezone_utils import get_timezone
 
@@ -112,21 +113,53 @@ class GoogleTasksService:
         due_date: date | None = None,
         notes: str = "",
         tasklist_name: str | None = None,
-        subtasks: list[str] | None = None,
+        subtasks: list[AssistantSubtask | str] | None = None,
     ) -> tuple[str, str]:
         tasklist = self.resolve_tasklist(tasklist_name)
         parent_id = self.create_task(title, due_date, notes, tasklist["title"])
         for subtask in subtasks or []:
-            clean_title = subtask.strip()
+            clean_title, clean_notes = self._subtask_fields(subtask)
             if clean_title:
                 self.create_task(
                     clean_title,
                     due_date=None,
-                    notes="",
+                    notes=clean_notes,
                     tasklist_name=tasklist["title"],
                     parent_task_id=parent_id,
                 )
         return parent_id, tasklist["title"]
+
+    def replace_subtasks(
+        self,
+        parent_task_id: str,
+        tasklist_name: str,
+        subtasks: list[AssistantSubtask | str] | None = None,
+    ) -> None:
+        tasklist = self.resolve_tasklist(tasklist_name)
+        response = (
+            self._get_service()
+            .tasks()
+            .list(tasklist=tasklist["id"], showCompleted=True, showHidden=True)
+            .execute()
+        )
+        for item in response.get("items", []):
+            if item.get("parent") == parent_task_id:
+                (
+                    self._get_service()
+                    .tasks()
+                    .delete(tasklist=tasklist["id"], task=item["id"])
+                    .execute()
+                )
+        for subtask in subtasks or []:
+            clean_title, clean_notes = self._subtask_fields(subtask)
+            if clean_title:
+                self.create_task(
+                    clean_title,
+                    due_date=None,
+                    notes=clean_notes,
+                    tasklist_name=tasklist["title"],
+                    parent_task_id=parent_task_id,
+                )
 
     def update_task(
         self,
@@ -198,6 +231,11 @@ class GoogleTasksService:
             .delete(tasklist=tasklist["id"], task=task_id)
             .execute()
         )
+
+    def _subtask_fields(self, subtask: AssistantSubtask | str) -> tuple[str, str]:
+        if isinstance(subtask, AssistantSubtask):
+            return subtask.title.strip(), subtask.notes.strip()
+        return str(subtask).strip(), ""
 
     def _get_service(self):
         if self._service is None:

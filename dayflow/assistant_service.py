@@ -20,6 +20,12 @@ class AssistantServiceError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class AssistantSubtask:
+    title: str
+    notes: str = ""
+
+
+@dataclass(frozen=True)
 class AssistantPlan:
     action: str
     reply: str
@@ -39,7 +45,7 @@ class AssistantPlan:
     event_group: str = ""
     task_list: str = ""
     outside_work_hours: bool = False
-    subtasks: tuple[str, ...] = ()
+    subtasks: tuple[AssistantSubtask, ...] = ()
 
 
 class AssistantService:
@@ -193,7 +199,7 @@ class AssistantService:
             try:
                 client = self._get_openrouter_client()
                 response = self._generate_openrouter_response(client, user_prompt)
-                self._log_debug_response(message_text, response)
+                self._log_debug_response("OpenRouter", message_text, response)
                 payload = self._extract_openrouter_payload(response)
             except Exception as exc:
                 raise self._map_openrouter_error(exc) from exc
@@ -244,7 +250,7 @@ class AssistantService:
                 client = self._get_client(genai)
                 try:
                     response = self._generate_structured_response(client, types, user_prompt)
-                    self._log_debug_response(message_text, response)
+                    self._log_debug_response("Gemini", message_text, response)
                 except Exception as exc:
                     if not self._is_invalid_argument_error(exc):
                         raise
@@ -254,7 +260,7 @@ class AssistantService:
                         exc,
                     )
                     response = self._generate_fallback_response(client, types, user_prompt)
-                    self._log_debug_response(f"{message_text} [fallback-after-400]", response)
+                    self._log_debug_response("Gemini", f"{message_text} [fallback-after-400]", response)
             except Exception as exc:
                 raise self._map_gemini_error(exc) from exc
         finally:
@@ -281,7 +287,7 @@ class AssistantService:
             self._log_debug_parse_failure(message_text, response, exc)
             try:
                 retry_response = self._generate_fallback_response(client, types, user_prompt)
-                self._log_debug_response(f"{message_text} [fallback]", retry_response)
+                self._log_debug_response("Gemini", f"{message_text} [fallback]", retry_response)
                 payload = self._extract_payload(retry_response)
             except Exception as retry_exc:
                 self._log_debug_parse_failure(message_text, locals().get("retry_response"), retry_exc)
@@ -298,11 +304,7 @@ class AssistantService:
         target_title = self._string_or_empty(payload.get("target_title"))
         new_title = self._string_or_empty(payload.get("new_title"))
         raw_subtasks = payload.get("subtasks", []) or []
-        subtasks = tuple(
-            self._string_or_empty(item)
-            for item in raw_subtasks
-            if self._string_or_empty(item)
-        )
+        subtasks = self._normalize_subtasks(raw_subtasks)
         if action == "create_task":
             task_fields = self._normalize_task_fields(
                 message_text=message_text,
@@ -323,12 +325,14 @@ class AssistantService:
                 task_list=task_list,
                 target_title=self._string_or_empty(payload.get("target_title")),
                 new_title=self._string_or_empty(payload.get("new_title")),
+                subtasks=subtasks,
             )
             title = task_fields["title"]
             notes = task_fields["notes"]
             task_list = task_fields["task_list"]
             target_title = task_fields["target_title"]
             new_title = task_fields["new_title"]
+            subtasks = task_fields["subtasks"]
         return AssistantPlan(
             action=action,
             reply=self._string_or_empty(payload.get("reply")),
@@ -355,6 +359,21 @@ class AssistantService:
         if value is None:
             return ""
         return str(value).strip()
+
+    def _normalize_subtasks(self, raw_subtasks: Any) -> tuple[AssistantSubtask, ...]:
+        if not isinstance(raw_subtasks, list):
+            return ()
+        subtasks: list[AssistantSubtask] = []
+        for item in raw_subtasks:
+            if isinstance(item, dict):
+                title = self._string_or_empty(item.get("title"))
+                notes = self._string_or_empty(item.get("notes") or item.get("description"))
+            else:
+                title = self._string_or_empty(item)
+                notes = ""
+            if title:
+                subtasks.append(AssistantSubtask(title=title, notes=notes))
+        return tuple(subtasks)
 
     def _get_gemini_client(self, genai_module):
         if self._client is None or self._client_provider != "gemini":
@@ -390,7 +409,8 @@ class AssistantService:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.1,
-            max_tokens=320,
+            max_tokens=1400,
+            response_format={"type": "json_object"},
         )
 
     def _extract_openrouter_payload(self, response) -> dict:
@@ -437,7 +457,7 @@ class AssistantService:
         title: str,
         notes: str,
         task_list: str,
-        subtasks: tuple[str, ...],
+        subtasks: tuple[AssistantSubtask, ...],
     ) -> dict[str, Any]:
         normalized_title = title
         normalized_notes = notes or self._extract_task_notes(message_text)
@@ -456,7 +476,11 @@ class AssistantService:
             "title": normalized_title.strip(),
             "notes": normalized_notes.strip(),
             "task_list": normalized_task_list.strip(),
-            "subtasks": tuple(item.strip() for item in normalized_subtasks if item.strip()),
+            "subtasks": tuple(
+                AssistantSubtask(title=item.title.strip(), notes=item.notes.strip())
+                for item in normalized_subtasks
+                if item.title.strip()
+            ),
         }
 
     def _normalize_task_update_fields(
@@ -468,12 +492,14 @@ class AssistantService:
         task_list: str,
         target_title: str,
         new_title: str,
-    ) -> dict[str, str]:
+        subtasks: tuple[AssistantSubtask, ...],
+    ) -> dict[str, Any]:
         normalized_notes = notes or self._extract_task_notes(message_text)
         normalized_task_list = task_list or self._extract_task_list(message_text)
         normalized_target_title = target_title.strip()
         normalized_new_title = new_title.strip()
         normalized_title = title.strip()
+        normalized_subtasks = subtasks or self._extract_task_subtasks(message_text)
 
         if not normalized_target_title:
             normalized_target_title = self._extract_task_update_target(message_text)
@@ -495,6 +521,11 @@ class AssistantService:
             "task_list": normalized_task_list.strip(),
             "target_title": normalized_target_title.strip(),
             "new_title": normalized_new_title.strip(),
+            "subtasks": tuple(
+                AssistantSubtask(title=item.title.strip(), notes=item.notes.strip())
+                for item in normalized_subtasks
+                if item.title.strip()
+            ),
         }
 
     def _extract_task_list(self, message_text: str) -> str:
@@ -507,7 +538,7 @@ class AssistantService:
             return ""
         return match.group("task_list").strip(" \"'.,:;!?")
 
-    def _extract_task_subtasks(self, message_text: str) -> tuple[str, ...]:
+    def _extract_task_subtasks(self, message_text: str) -> tuple[AssistantSubtask, ...]:
         match = re.search(
             r"подзадач[аиы]?\s*:\s*(?P<subtasks>.+)$",
             message_text,
@@ -516,7 +547,11 @@ class AssistantService:
         if not match:
             return ()
         raw_items = re.split(r"\s*,\s*", match.group("subtasks").strip())
-        return tuple(item.strip(" \"'.,:;!?") for item in raw_items if item.strip(" \"'.,:;!?"))
+        return tuple(
+            AssistantSubtask(title=item.strip(" \"'.,:;!?"))
+            for item in raw_items
+            if item.strip(" \"'.,:;!?")
+        )
 
     def _extract_task_title(self, message_text: str) -> str:
         text = message_text.strip()
@@ -741,11 +776,12 @@ class AssistantService:
             ),
         )
 
-    def _log_debug_response(self, message_text: str, response) -> None:
+    def _log_debug_response(self, provider: str, message_text: str, response) -> None:
         if not self.settings.gemini_debug_logging:
             return
         logger.info(
-            "Gemini raw response for %r: %s",
+            "%s raw response for %r: %s",
+            provider,
             self._truncate(message_text, 120),
             self._summarize_response(response),
         )
