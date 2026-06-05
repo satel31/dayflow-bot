@@ -33,6 +33,7 @@ class Settings:
     openrouter_model: str = "openai/gpt-4o-mini"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_proxy_url: str = ""
+    digest_subscribers_path: str = "data/digest_subscribers.json"
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
     celery_beat_schedule_path: str = "data/celerybeat-schedule"
@@ -53,6 +54,9 @@ def load_settings() -> Settings:
         ).strip(),
         google_token_path=os.getenv("GOOGLE_TOKEN_PATH", "token.json").strip(),
         google_tokens_dir=os.getenv("GOOGLE_TOKENS_DIR", "data/google_tokens").strip(),
+        digest_subscribers_path=os.getenv(
+            "DIGEST_SUBSCRIBERS_PATH", "data/digest_subscribers.json"
+        ).strip(),
         work_schedule_path=os.getenv("WORK_SCHEDULE_PATH", "data/work_schedule.json").strip(),
         gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip(),

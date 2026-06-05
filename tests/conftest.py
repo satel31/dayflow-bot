@@ -44,9 +44,40 @@ class InMemoryGroupStore:
         return self.groups[resolved_name]
 
 
+class InMemoryDigestSubscriberStore:
+    def __init__(self) -> None:
+        self.subscribers: dict[int, int] = {}
+
+    def list_subscribers(self):
+        return [
+            SimpleDigestSubscriber(user_id=user_id, chat_id=chat_id)
+            for user_id, chat_id in sorted(self.subscribers.items())
+        ]
+
+    def add(self, user_id: int, chat_id: int):
+        self.subscribers[int(user_id)] = int(chat_id)
+        return SimpleDigestSubscriber(user_id=int(user_id), chat_id=int(chat_id))
+
+    def remove(self, user_id: int) -> bool:
+        return self.subscribers.pop(int(user_id), None) is not None
+
+    def get(self, user_id: int):
+        chat_id = self.subscribers.get(int(user_id))
+        if chat_id is None:
+            return None
+        return SimpleDigestSubscriber(user_id=int(user_id), chat_id=chat_id)
+
+
+class SimpleDigestSubscriber:
+    def __init__(self, user_id: int, chat_id: int) -> None:
+        self.user_id = user_id
+        self.chat_id = chat_id
+
+
 @pytest.fixture(autouse=True)
 def isolated_bot_state(monkeypatch):
     monkeypatch.setattr(bot, "group_store", InMemoryGroupStore())
+    monkeypatch.setattr(bot, "digest_subscriber_store", InMemoryDigestSubscriberStore())
     bot.pending_drafts.clear()
     bot.pending_clarifications.clear()
     bot.pending_selections.clear()

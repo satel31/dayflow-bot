@@ -110,12 +110,25 @@ venv\Scripts\celery.exe -A dayflow.celery_app.celery_app inspect registered
 
 Бот пришлет ссылку Google OAuth. После входа в Google нужно скопировать полный URL из адресной строки, который начинается с `http://localhost:...`, и отправить его обратно боту одним сообщением.
 
+Чтобы включить ежедневную рассылку для текущего Telegram-чата, после подключения Google отправьте:
+
+```text
+/digest_subscribe
+```
+
+Отключить рассылку:
+
+```text
+/digest_unsubscribe
+```
+
 ## Примеры команд
 
 ```text
 /today 2026-03-13
 /slots 2026-03-13 30
 /connect_google
+/digest_subscribe
 /add 2026-03-13 15:00 | Созвон с командой | 45
 /ask Какие окна лучше оставить под глубокую работу завтра?
 ```

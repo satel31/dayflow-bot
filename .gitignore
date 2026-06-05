@@ -10,6 +10,8 @@ CALENDAR_MVP_NOTES.txt
 TESTING.md
 
 data/google_tokens/
+data/digest_subscribers.json
+data/celerybeat-schedule*
 .env
 credentials.json
 token.json

@@ -26,9 +26,11 @@ from dayflow.auth import (
     build_google_auth_session,
     complete_google_auth,
     disconnect_google_account,
+    token_path_for_user,
 )
 from dayflow.calendar_service import CalendarEvent, GoogleCalendarService
 from dayflow.config import load_settings
+from dayflow.digest_subscriber_store import DigestSubscriberStore
 from dayflow.group_store import EventGroupStore
 from dayflow.tasks_service import GoogleTasksService, TaskItem
 from dayflow.timezone_utils import get_timezone
@@ -155,6 +157,7 @@ calendar_service = GoogleCalendarService(settings)
 assistant_service = AssistantService(settings)
 tasks_service = GoogleTasksService(settings)
 group_store = EventGroupStore(settings.event_groups_path)
+digest_subscriber_store = DigestSubscriberStore(settings.digest_subscribers_path)
 work_schedule_store = WorkScheduleStore(
     settings.work_schedule_path,
     settings.workday_start_hour,
@@ -216,6 +219,10 @@ def get_tasks_service(user_id: int | None = None):
 def reset_user_google_services(user_id: int) -> None:
     user_calendar_services.pop(user_id, None)
     user_tasks_services.pop(user_id, None)
+
+
+def user_google_token_exists(user_id: int) -> bool:
+    return token_path_for_user(settings, user_id).exists()
 
 
 def parse_date(raw_value: str) -> date:
@@ -1341,6 +1348,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Доступно:\n"
         "/connect_google\n"
         "/disconnect_google\n"
+        "/digest_subscribe\n"
+        "/digest_unsubscribe\n"
         "/today YYYY-MM-DD\n"
         "/slots YYYY-MM-DD [minutes]\n"
         "/groups\n"
@@ -1373,10 +1382,32 @@ async def disconnect_google_command(update: Update, context: ContextTypes.DEFAUL
     user_id = get_actor_id(update)
     pending_google_auth.pop(user_id, None)
     reset_user_google_services(user_id)
+    digest_subscriber_store.remove(user_id)
     if disconnect_google_account(settings, user_id):
         await safe_reply_text(update.message, "Google-аккаунт для этого Telegram-пользователя отключен.")
         return
     await safe_reply_text(update.message, "Для этого пользователя подключенного Google-аккаунта не было.")
+
+
+async def digest_subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = get_actor_id(update)
+    chat_id = update.effective_chat.id
+    if not user_google_token_exists(user_id):
+        await safe_reply_text(
+            update.message,
+            "Сначала подключите Google командой /connect_google, потом включите рассылку еще раз.",
+        )
+        return
+    digest_subscriber_store.add(user_id=user_id, chat_id=chat_id)
+    await safe_reply_text(update.message, "Ежедневная рассылка включена для этого чата.")
+
+
+async def digest_unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = get_actor_id(update)
+    if digest_subscriber_store.remove(user_id):
+        await safe_reply_text(update.message, "Ежедневная рассылка отключена.")
+        return
+    await safe_reply_text(update.message, "Ежедневная рассылка уже была отключена.")
 
 
 async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1529,7 +1560,11 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         except Exception as exc:
             await safe_reply_text(update.message, f"Не удалось завершить подключение Google: {exc}")
             return
-        await safe_reply_text(update.message, "Google-аккаунт подключен. Теперь бот работает с вашим календарем и задачами.")
+        await safe_reply_text(
+            update.message,
+            "Google-аккаунт подключен. Теперь бот работает с вашим календарем и задачами.\n"
+            "Чтобы получать ежедневную рассылку, отправьте /digest_subscribe.",
+        )
         return
     if chat_id in pending_clarifications and text_is_no(text):
         pending_clarifications.pop(chat_id, None)
@@ -2276,6 +2311,8 @@ def main() -> None:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("connect_google", connect_google_command))
     application.add_handler(CommandHandler("disconnect_google", disconnect_google_command))
+    application.add_handler(CommandHandler("digest_subscribe", digest_subscribe_command))
+    application.add_handler(CommandHandler("digest_unsubscribe", digest_unsubscribe_command))
     application.add_handler(CommandHandler("today", today_command))
     application.add_handler(CommandHandler("slots", slots_command))
     application.add_handler(CommandHandler("groups", groups_command))

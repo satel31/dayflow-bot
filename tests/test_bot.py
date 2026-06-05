@@ -211,10 +211,53 @@ def make_task(
     )
 
 
-def make_update(message=None):
+def test_digest_subscribe_requires_google_token(monkeypatch):
+    monkeypatch.setattr(bot, "user_google_token_exists", lambda user_id: False)
+    update = make_update(FakeMessage(), chat_id=555, user_id=777)
+
+    asyncio.run(bot.digest_subscribe_command(update, None))
+
+    assert "Сначала подключите Google" in update.message.replies[0]["text"]
+    assert bot.digest_subscriber_store.get(777) is None
+
+
+def test_digest_subscribe_stores_user_and_chat(monkeypatch):
+    monkeypatch.setattr(bot, "user_google_token_exists", lambda user_id: True)
+    update = make_update(FakeMessage(), chat_id=555, user_id=777)
+
+    asyncio.run(bot.digest_subscribe_command(update, None))
+
+    subscriber = bot.digest_subscriber_store.get(777)
+    assert subscriber.user_id == 777
+    assert subscriber.chat_id == 555
+    assert "включена" in update.message.replies[0]["text"]
+
+
+def test_digest_unsubscribe_removes_subscriber():
+    bot.digest_subscriber_store.add(user_id=777, chat_id=555)
+    update = make_update(FakeMessage(), chat_id=555, user_id=777)
+
+    asyncio.run(bot.digest_unsubscribe_command(update, None))
+
+    assert bot.digest_subscriber_store.get(777) is None
+    assert "отключена" in update.message.replies[0]["text"]
+
+
+def test_disconnect_google_removes_digest_subscription(monkeypatch):
+    bot.digest_subscriber_store.add(user_id=777, chat_id=555)
+    monkeypatch.setattr(bot, "disconnect_google_account", lambda settings, user_id: True)
+    update = make_update(FakeMessage(), chat_id=555, user_id=777)
+
+    asyncio.run(bot.disconnect_google_command(update, None))
+
+    assert bot.digest_subscriber_store.get(777) is None
+
+
+def make_update(message=None, *, chat_id=123, user_id=None):
     message = message or FakeMessage()
     return SimpleNamespace(
-        effective_chat=SimpleNamespace(id=123),
+        effective_chat=SimpleNamespace(id=chat_id),
+        effective_user=SimpleNamespace(id=user_id) if user_id is not None else None,
         message=message,
     )
 
