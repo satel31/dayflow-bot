@@ -12,6 +12,14 @@ def test_celery_app_registers_smoke_task():
     assert "dayflow.smoke" in celery_app.tasks
     assert "dayflow.build_daily_digest" in celery_app.tasks
     assert "dayflow.send_daily_digest" in celery_app.tasks
+    assert celery_app.conf.beat_schedule["send-morning-digest"]["task"] == "dayflow.send_daily_digest"
+    assert celery_app.conf.beat_schedule["send-morning-digest"]["args"] == ("morning",)
+    assert celery_app.conf.beat_schedule["send-morning-digest"]["schedule"].hour == {10}
+    assert celery_app.conf.beat_schedule["send-morning-digest"]["schedule"].minute == {0}
+    assert celery_app.conf.beat_schedule["send-evening-digest"]["task"] == "dayflow.send_daily_digest"
+    assert celery_app.conf.beat_schedule["send-evening-digest"]["args"] == ("evening",)
+    assert celery_app.conf.beat_schedule["send-evening-digest"]["schedule"].hour == {22}
+    assert celery_app.conf.beat_schedule["send-evening-digest"]["schedule"].minute == {0}
 
 
 def test_celery_health_lists_local_tasks():

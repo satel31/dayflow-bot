@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from celery import Celery
+from celery.schedules import crontab
 
 from dayflow.config import load_settings
 
@@ -33,6 +34,18 @@ celery_app.conf.update(
     timezone=settings.timezone,
     enable_utc=True,
     beat_schedule_filename=settings.celery_beat_schedule_path,
+    beat_schedule={
+        "send-morning-digest": {
+            "task": "dayflow.send_daily_digest",
+            "schedule": crontab(minute=0, hour=settings.digest_morning_hour),
+            "args": ("morning",),
+        },
+        "send-evening-digest": {
+            "task": "dayflow.send_daily_digest",
+            "schedule": crontab(minute=0, hour=settings.digest_evening_hour),
+            "args": ("evening",),
+        },
+    },
     broker_transport_options=broker_transport_options,
     task_serializer="json",
     accept_content=("json",),

@@ -34,6 +34,8 @@ class Settings:
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_proxy_url: str = ""
     digest_subscribers_path: str = "data/digest_subscribers.json"
+    digest_morning_hour: int = 10
+    digest_evening_hour: int = 22
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
     celery_broker_data_dir: str = "data/celery_broker"
@@ -72,6 +74,8 @@ def load_settings() -> Settings:
         openrouter_model=os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini").strip(),
         openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip(),
         openrouter_proxy_url=os.getenv("OPENROUTER_PROXY_URL", outbound_proxy_url).strip(),
+        digest_morning_hour=int(os.getenv("DIGEST_MORNING_HOUR", "10")),
+        digest_evening_hour=int(os.getenv("DIGEST_EVENING_HOUR", "22")),
         celery_broker_url=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0").strip(),
         celery_result_backend=os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1").strip(),
         celery_broker_data_dir=os.getenv("CELERY_BROKER_DATA_DIR", "data/celery_broker").strip(),

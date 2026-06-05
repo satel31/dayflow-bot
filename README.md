@@ -133,6 +133,20 @@ venv\Scripts\celery.exe -A dayflow.celery_app.celery_app inspect registered
 /digest_unsubscribe
 ```
 
+Рассылка отправляется через Celery beat:
+
+```env
+DIGEST_MORNING_HOUR=10
+DIGEST_EVENING_HOUR=22
+```
+
+Чтобы расписание работало, одновременно должны быть запущены worker и beat:
+
+```powershell
+.\scripts\start_celery_worker.ps1
+.\scripts\start_celery_beat.ps1
+```
+
 ## Примеры команд
 
 ```text

@@ -51,6 +51,9 @@ def main() -> int:
     print("Local tasks:")
     for task_name in local_task_names():
         print(f"- {task_name}")
+    print("Beat schedule:")
+    for schedule_name, entry in celery_app.conf.beat_schedule.items():
+        print(f"- {schedule_name}: {entry['task']} {entry.get('args', ())}")
 
     broker_label, broker_ok, broker_message = check_broker()
     print(f"{broker_label}: {broker_message}")
