@@ -33,6 +33,8 @@ class Settings:
     openrouter_model: str = "openai/gpt-4o-mini"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_proxy_url: str = ""
+    celery_broker_url: str = "redis://localhost:6379/0"
+    celery_result_backend: str = "redis://localhost:6379/1"
 
 
 def load_settings() -> Settings:
@@ -64,4 +66,6 @@ def load_settings() -> Settings:
         openrouter_model=os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini").strip(),
         openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip(),
         openrouter_proxy_url=os.getenv("OPENROUTER_PROXY_URL", outbound_proxy_url).strip(),
+        celery_broker_url=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0").strip(),
+        celery_result_backend=os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1").strip(),
     )

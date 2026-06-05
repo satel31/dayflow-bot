@@ -28,6 +28,7 @@
 - токен бота от `@BotFather`
 - Google Cloud OAuth credentials для Desktop app
 - `OPENROUTER_API_KEY` рекомендован для свободных текстовых запросов
+- Redis для фоновых задач Celery
 
 ## Подготовка Google API
 
@@ -64,6 +65,35 @@ OPENROUTER_MODEL=openai/gpt-4o-mini
 ```
 
 Если `OPENROUTER_API_KEY` не задан, бот по-прежнему может использовать старый путь через `GEMINI_API_KEY`.
+
+## Фоновые задачи Celery
+
+Celery использует Redis как брокер и backend. По умолчанию проект ожидает локальный Redis:
+
+```env
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/1
+```
+
+Запуск worker на Windows:
+
+```powershell
+cd D:\dayflow-bot
+venv\Scripts\celery.exe -A dayflow.celery_app.celery_app worker --loglevel=info --pool=solo
+```
+
+Запуск beat-планировщика отдельным окном:
+
+```powershell
+cd D:\dayflow-bot
+venv\Scripts\celery.exe -A dayflow.celery_app.celery_app beat --loglevel=info
+```
+
+Проверка регистрации задач:
+
+```powershell
+venv\Scripts\celery.exe -A dayflow.celery_app.celery_app inspect registered
+```
 
 После запуска каждый пользователь Telegram должен сам выполнить:
 
