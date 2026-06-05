@@ -17,6 +17,7 @@ celery_app = Celery(
 celery_app.conf.update(
     timezone=settings.timezone,
     enable_utc=True,
+    beat_schedule_filename=settings.celery_beat_schedule_path,
     task_serializer="json",
     accept_content=("json",),
     result_serializer="json",

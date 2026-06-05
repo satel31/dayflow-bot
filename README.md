@@ -73,20 +73,27 @@ Celery использует Redis как брокер и backend. По умол�
 ```env
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/1
+CELERY_BEAT_SCHEDULE_PATH=data/celerybeat-schedule
 ```
 
-Запуск worker на Windows:
+Проверка Redis и локальной регистрации Celery-задач:
+
+```powershell
+.\scripts\check_celery.ps1
+```
+
+Запуск worker отдельным окном PowerShell:
 
 ```powershell
 cd D:\dayflow-bot
-venv\Scripts\celery.exe -A dayflow.celery_app.celery_app worker --loglevel=info --pool=solo
+.\scripts\start_celery_worker.ps1
 ```
 
-Запуск beat-планировщика отдельным окном:
+Запуск beat-планировщика еще одним отдельным окном PowerShell:
 
 ```powershell
 cd D:\dayflow-bot
-venv\Scripts\celery.exe -A dayflow.celery_app.celery_app beat --loglevel=info
+.\scripts\start_celery_beat.ps1
 ```
 
 Проверка регистрации задач:
