@@ -10,7 +10,10 @@ def test_celery_app_registers_smoke_task():
     assert celery_app.conf.timezone == settings.timezone
     assert celery_app.conf.beat_schedule_filename == settings.celery_beat_schedule_path
     assert "dayflow.smoke" in celery_app.tasks
+    assert "dayflow.build_daily_digest" in celery_app.tasks
+    assert "dayflow.send_daily_digest" in celery_app.tasks
 
 
 def test_celery_health_lists_local_tasks():
     assert "dayflow.smoke" in local_task_names()
+    assert "dayflow.send_daily_digest" in local_task_names()

@@ -1,11 +1,26 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from celery import Celery
 
 from dayflow.config import load_settings
 
 
 settings = load_settings()
+
+broker_transport_options = {}
+if settings.celery_broker_url == "filesystem://":
+    broker_dir = Path(settings.celery_broker_data_dir)
+    queue_dir = broker_dir / "queue"
+    processed_dir = broker_dir / "processed"
+    queue_dir.mkdir(parents=True, exist_ok=True)
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    broker_transport_options = {
+        "data_folder_in": str(queue_dir),
+        "data_folder_out": str(queue_dir),
+        "data_folder_processed": str(processed_dir),
+    }
 
 celery_app = Celery(
     "dayflow",
@@ -18,6 +33,7 @@ celery_app.conf.update(
     timezone=settings.timezone,
     enable_utc=True,
     beat_schedule_filename=settings.celery_beat_schedule_path,
+    broker_transport_options=broker_transport_options,
     task_serializer="json",
     accept_content=("json",),
     result_serializer="json",

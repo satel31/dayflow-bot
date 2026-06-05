@@ -68,11 +68,22 @@ OPENROUTER_MODEL=openai/gpt-4o-mini
 
 ## Фоновые задачи Celery
 
-Celery использует Redis как брокер и backend. По умолчанию проект ожидает локальный Redis:
+Celery использует Redis как основной брокер и backend. Для локальной проверки на Windows можно включить filesystem broker без Redis.
+
+Основной режим для сервера:
 
 ```env
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/1
+CELERY_BEAT_SCHEDULE_PATH=data/celerybeat-schedule
+```
+
+Локальный dev-режим без Redis:
+
+```env
+CELERY_BROKER_URL=filesystem://
+CELERY_RESULT_BACKEND=rpc://
+CELERY_BROKER_DATA_DIR=data/celery_broker
 CELERY_BEAT_SCHEDULE_PATH=data/celerybeat-schedule
 ```
 

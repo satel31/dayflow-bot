@@ -11,7 +11,10 @@ TESTING.md
 
 data/google_tokens/
 data/digest_subscribers.json
+data/celery_broker/
 data/celerybeat-schedule*
+data/celery_*.log
+control/
 .env
 credentials.json
 token.json

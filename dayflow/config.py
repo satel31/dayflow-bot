@@ -36,6 +36,7 @@ class Settings:
     digest_subscribers_path: str = "data/digest_subscribers.json"
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
+    celery_broker_data_dir: str = "data/celery_broker"
     celery_beat_schedule_path: str = "data/celerybeat-schedule"
 
 
@@ -73,6 +74,7 @@ def load_settings() -> Settings:
         openrouter_proxy_url=os.getenv("OPENROUTER_PROXY_URL", outbound_proxy_url).strip(),
         celery_broker_url=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0").strip(),
         celery_result_backend=os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1").strip(),
+        celery_broker_data_dir=os.getenv("CELERY_BROKER_DATA_DIR", "data/celery_broker").strip(),
         celery_beat_schedule_path=os.getenv(
             "CELERY_BEAT_SCHEDULE_PATH", "data/celerybeat-schedule"
         ).strip(),
