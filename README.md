@@ -57,6 +57,30 @@ Copy-Item .env.example .env
 python bot.py
 ```
 
+Для серверного webhook-режима задайте публичный HTTPS URL и случайный секрет:
+
+```env
+WEBHOOK_BASE_URL=https://your-service.example
+TELEGRAM_WEBHOOK_SECRET=long-random-secret
+```
+
+Затем запустите HTTP-приложение:
+
+```powershell
+uvicorn dayflow.web_app:app --host 0.0.0.0 --port 8000
+```
+
+При старте приложение регистрирует `${WEBHOOK_BASE_URL}/telegram/webhook` в Telegram.
+Проверка доступности сервиса: `GET /health`. Локальный polling-режим через
+`python bot.py` пока сохранен для разработки.
+
+Для Koyeb используйте Dockerfile из корня проекта. В настройках сервиса:
+
+- откройте HTTP-порт `8000`;
+- задайте health-check path `/health`;
+- добавьте секреты и остальные настройки из `.env.example` как environment variables;
+- не загружайте локальные `.env`, `credentials.json`, `token.json` и каталог `data`.
+
 Для OpenRouter обычно достаточно указать:
 
 ```env

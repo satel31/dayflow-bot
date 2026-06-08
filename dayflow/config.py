@@ -40,6 +40,8 @@ class Settings:
     celery_result_backend: str = "redis://localhost:6379/1"
     celery_broker_data_dir: str = "data/celery_broker"
     celery_beat_schedule_path: str = "data/celerybeat-schedule"
+    webhook_base_url: str = ""
+    telegram_webhook_secret: str = ""
 
 
 def load_settings() -> Settings:
@@ -82,4 +84,6 @@ def load_settings() -> Settings:
         celery_beat_schedule_path=os.getenv(
             "CELERY_BEAT_SCHEDULE_PATH", "data/celerybeat-schedule"
         ).strip(),
+        webhook_base_url=os.getenv("WEBHOOK_BASE_URL", "").strip().rstrip("/"),
+        telegram_webhook_secret=os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip(),
     )

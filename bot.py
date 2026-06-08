@@ -2292,7 +2292,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
 
-def main() -> None:
+def build_application() -> Application:
     builder = Application.builder().token(require_token())
     if settings.telegram_proxy_url:
         builder = builder.request(HTTPXRequest(proxy=settings.telegram_proxy_url))
@@ -2325,6 +2325,11 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(callback_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message))
     application.add_error_handler(error_handler)
+    return application
+
+
+def main() -> None:
+    application = build_application()
     application.run_polling()
 
 

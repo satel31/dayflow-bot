@@ -8,3 +8,5 @@ celery[redis]==5.4.0
 pywin32==308; platform_system == "Windows"
 tzdata==2025.2
 pytest==8.4.1
+fastapi==0.115.12
+uvicorn[standard]==0.34.2

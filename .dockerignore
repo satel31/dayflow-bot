@@ -1,0 +1,13 @@
+.env
+.git
+.idea
+.pytest_cache
+.venv
+venv
+__pycache__
+*.pyc
+credentials.json
+token.json
+data
+control
+tests
