@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import json
 import logging
+from pathlib import Path
 
 from dayflow.config import Settings
 from dayflow.digest_service import DigestKind, build_daily_digest_for_user
-from dayflow.supabase_client import build_supabase_client
 from dayflow.telegram_sender import send_telegram_message
 from dayflow.timezone_utils import get_timezone
 from dayflow.user_profile_store import UserProfile, build_user_profile_store
@@ -23,33 +24,31 @@ class CronDigestResult:
     failed: int
 
 
-class MemoryDeliveryClaimStore:
-    def __init__(self) -> None:
-        self.claims: set[str] = set()
+class FileDeliveryClaimStore:
+    def __init__(self, path: str) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.exists():
+            self._write(set())
 
     def claim(self, key: str, user_id: int, kind: DigestKind, local_date: str) -> bool:
-        if key in self.claims:
+        claims = self._read()
+        if key in claims:
             return False
-        self.claims.add(key)
+        claims.add(key)
+        self._write(claims)
         return True
 
     def release(self, key: str) -> None:
-        self.claims.discard(key)
+        claims = self._read()
+        claims.discard(key)
+        self._write(claims)
 
+    def _read(self) -> set[str]:
+        return set(json.loads(self.path.read_text(encoding="utf-8")))
 
-class SupabaseDeliveryClaimStore:
-    def __init__(self, settings: Settings) -> None:
-        self.client = build_supabase_client(settings)
-
-    def claim(self, key: str, user_id: int, kind: DigestKind, local_date: str) -> bool:
-        return self.client.insert_ignore(
-            "digest_deliveries",
-            {"delivery_key": key, "user_id": user_id, "kind": kind, "local_date": local_date},
-            on_conflict="delivery_key",
-        )
-
-    def release(self, key: str) -> None:
-        self.client.delete("digest_deliveries", params={"delivery_key": f"eq.{key}"})
+    def _write(self, claims: set[str]) -> None:
+        self.path.write_text(json.dumps(sorted(claims), indent=2), encoding="utf-8")
 
 
 def send_due_digests(
@@ -64,11 +63,7 @@ def send_due_digests(
 ) -> CronDigestResult:
     now_utc = now or datetime.now(timezone.utc)
     profiles = (profile_store or build_user_profile_store(settings)).list_profiles()
-    claims = claim_store or (
-        SupabaseDeliveryClaimStore(settings)
-        if settings.persistent_backend == "supabase"
-        else MemoryDeliveryClaimStore()
-    )
+    claims = claim_store or FileDeliveryClaimStore(settings.digest_deliveries_path)
     due = sent = skipped = failed = 0
     for profile in profiles:
         local_now = now_utc.astimezone(get_timezone(profile.timezone))

@@ -12,9 +12,7 @@ from telegram.ext import Application
 
 import bot
 from dayflow.config import Settings, load_settings
-from dayflow.conversation_state_store import SupabaseConversationStateStore
 from dayflow.cron_service import send_due_digests
-from dayflow.supabase_client import build_supabase_client
 
 
 logger = logging.getLogger(__name__)
@@ -51,14 +49,6 @@ def create_web_app(
             bot.google_auth_session_store.cleanup_expired()
         except Exception:
             logger.exception("Failed to clean expired Google OAuth sessions")
-        if web_settings.persistent_backend == "supabase":
-            try:
-                SupabaseConversationStateStore(
-                    build_supabase_client(web_settings),
-                    web_settings.data_encryption_key,
-                ).cleanup_expired()
-            except Exception:
-                logger.exception("Failed to clean expired conversation states")
 
         yield
 
@@ -71,13 +61,7 @@ def create_web_app(
 
     @app.get("/health")
     async def health() -> dict[str, str]:
-        if web_settings.persistent_backend == "supabase":
-            try:
-                await asyncio.to_thread(build_supabase_client(web_settings).ping)
-            except Exception as exc:
-                logger.exception("Supabase health check failed")
-                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Supabase unavailable") from exc
-        return {"status": "ok", "storage": web_settings.persistent_backend}
+        return {"status": "ok", "storage": "file"}
 
     @app.post(TELEGRAM_WEBHOOK_PATH)
     async def telegram_webhook(

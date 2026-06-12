@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 from dayflow.config import Settings
-from dayflow.supabase_client import SupabaseRestClient, build_supabase_client
 
 
 COLOR_ALIASES = {
@@ -92,21 +91,5 @@ class EventGroupStore:
         )
 
 
-class SupabaseEventGroupStore(EventGroupStore):
-    def __init__(self, client: SupabaseRestClient) -> None:
-        self.client = client
-
-    def _read(self) -> dict[str, str]:
-        payload = self.client.get_app_state("event_groups")
-        return dict(payload) if isinstance(payload, dict) else {}
-
-    def _write(self, data: dict[str, str]) -> None:
-        self.client.set_app_state("event_groups", data)
-
-
 def build_event_group_store(settings: Settings):
-    if settings.persistent_backend == "supabase":
-        return SupabaseEventGroupStore(build_supabase_client(settings))
-    if settings.persistent_backend != "file":
-        raise ValueError(f"Unsupported PERSISTENT_BACKEND: {settings.persistent_backend}")
     return EventGroupStore(settings.event_groups_path)

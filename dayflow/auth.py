@@ -11,7 +11,6 @@ from google_auth_oauthlib.flow import Flow
 
 from dayflow.config import Settings
 from dayflow.crypto import decrypt_text, encrypt_text
-from dayflow.supabase_client import build_supabase_client
 
 
 GOOGLE_SCOPES = [
@@ -110,11 +109,6 @@ def complete_google_auth(
 
 
 def disconnect_google_account(settings: Settings, user_id: int) -> bool:
-    if settings.persistent_backend == "supabase":
-        return build_supabase_client(settings).delete(
-            "google_tokens",
-            params={"user_id": f"eq.{int(user_id)}"},
-        )
     token_path = token_path_for_user(settings, user_id)
     if not token_path.exists():
         return False
@@ -123,12 +117,6 @@ def disconnect_google_account(settings: Settings, user_id: int) -> bool:
 
 
 def google_token_exists(settings: Settings, user_id: int) -> bool:
-    if settings.persistent_backend == "supabase":
-        rows = build_supabase_client(settings).select(
-            "google_tokens",
-            params={"select": "user_id", "user_id": f"eq.{int(user_id)}", "limit": "1"},
-        )
-        return bool(rows)
     return token_path_for_user(settings, user_id).exists()
 
 
@@ -139,33 +127,16 @@ def _resolve_token_path(settings: Settings, user_id: int | None) -> Path:
 
 
 def _read_token_json(settings: Settings, user_id: int | None) -> str | None:
-    if settings.persistent_backend == "supabase" and user_id is not None:
-        rows = build_supabase_client(settings).select(
-            "google_tokens",
-            params={"select": "token_json", "user_id": f"eq.{int(user_id)}", "limit": "1"},
-        )
-        if not rows:
-            return None
-        token_json = rows[0]["token_json"]
-        serialized = json.dumps(token_json) if isinstance(token_json, dict) else str(token_json)
-        return decrypt_text(serialized, settings.data_encryption_key)
     token_path = _resolve_token_path(settings, user_id)
-    return token_path.read_text(encoding="utf-8") if token_path.exists() else None
+    if not token_path.exists():
+        return None
+    return decrypt_text(token_path.read_text(encoding="utf-8"), settings.data_encryption_key)
 
 
 def _write_token_json(settings: Settings, user_id: int | None, token_json: str) -> None:
-    if settings.persistent_backend == "supabase":
-        if user_id is None:
-            raise ValueError("Supabase token storage requires a Telegram user_id.")
-        build_supabase_client(settings).upsert(
-            "google_tokens",
-            {"user_id": int(user_id), "token_json": encrypt_text(token_json, settings.data_encryption_key)},
-            on_conflict="user_id",
-        )
-        return
     token_path = _resolve_token_path(settings, user_id)
     token_path.parent.mkdir(parents=True, exist_ok=True)
-    token_path.write_text(token_json, encoding="utf-8")
+    token_path.write_text(encrypt_text(token_json, settings.data_encryption_key), encoding="utf-8")
 
 
 def _load_google_client_config(settings: Settings) -> dict:

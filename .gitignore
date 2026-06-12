@@ -11,6 +11,9 @@ TESTING.md
 
 data/google_tokens/
 data/digest_subscribers.json
+data/user_profiles.json
+data/google_auth_sessions.json
+data/digest_deliveries.json
 data/celery_broker/
 data/celerybeat-schedule*
 data/celery_*.log

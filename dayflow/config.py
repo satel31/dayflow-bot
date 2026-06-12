@@ -42,12 +42,12 @@ class Settings:
     celery_beat_schedule_path: str = "data/celerybeat-schedule"
     webhook_base_url: str = ""
     telegram_webhook_secret: str = ""
-    persistent_backend: str = "file"
-    supabase_url: str = ""
-    supabase_service_role_key: str = ""
     google_credentials_json: str = ""
     cron_secret: str = ""
     data_encryption_key: str = ""
+    user_profiles_path: str = "data/user_profiles.json"
+    google_auth_sessions_path: str = "data/google_auth_sessions.json"
+    digest_deliveries_path: str = "data/digest_deliveries.json"
 
 
 def load_settings() -> Settings:
@@ -92,10 +92,14 @@ def load_settings() -> Settings:
         ).strip(),
         webhook_base_url=os.getenv("WEBHOOK_BASE_URL", "").strip().rstrip("/"),
         telegram_webhook_secret=os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip(),
-        persistent_backend=os.getenv("PERSISTENT_BACKEND", "file").strip().casefold(),
-        supabase_url=os.getenv("SUPABASE_URL", "").strip().rstrip("/"),
-        supabase_service_role_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip(),
         google_credentials_json=os.getenv("GOOGLE_CREDENTIALS_JSON", "").strip(),
         cron_secret=os.getenv("CRON_SECRET", "").strip(),
         data_encryption_key=os.getenv("DATA_ENCRYPTION_KEY", "").strip(),
+        user_profiles_path=os.getenv("USER_PROFILES_PATH", "data/user_profiles.json").strip(),
+        google_auth_sessions_path=os.getenv(
+            "GOOGLE_AUTH_SESSIONS_PATH", "data/google_auth_sessions.json"
+        ).strip(),
+        digest_deliveries_path=os.getenv(
+            "DIGEST_DELIVERIES_PATH", "data/digest_deliveries.json"
+        ).strip(),
     )

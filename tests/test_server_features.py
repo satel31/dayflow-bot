@@ -6,10 +6,11 @@ from types import SimpleNamespace
 from cryptography.fernet import Fernet
 
 from dayflow.config import Settings
-from dayflow.conversation_state_store import PersistentStateDict, SupabaseConversationStateStore
-from dayflow.cron_service import MemoryDeliveryClaimStore, send_due_digests
+from dayflow.cron_service import FileDeliveryClaimStore, send_due_digests
 from dayflow.crypto import decrypt_text, encrypt_text
-from dayflow.user_profile_store import UserProfile
+from dayflow.google_auth_session_store import GoogleAuthSessionStore
+from dayflow.auth import GoogleAuthSession
+from dayflow.user_profile_store import UserProfile, UserProfileStore
 
 
 def make_settings(**overrides) -> Settings:
@@ -45,7 +46,7 @@ def test_encrypt_text_round_trip() -> None:
     assert decrypt_text(encrypted, key) == '{"token":"secret"}'
 
 
-def test_send_due_digests_uses_profile_timezone_and_is_idempotent() -> None:
+def test_send_due_digests_uses_profile_timezone_and_is_idempotent(tmp_path) -> None:
     profiles = SimpleNamespace(
         list_profiles=lambda: [
             UserProfile(
@@ -57,7 +58,7 @@ def test_send_due_digests_uses_profile_timezone_and_is_idempotent() -> None:
             )
         ]
     )
-    claims = MemoryDeliveryClaimStore()
+    claims = FileDeliveryClaimStore(str(tmp_path / "claims.json"))
     sent = []
     build_calls = []
 
@@ -94,11 +95,11 @@ def test_send_due_digests_uses_profile_timezone_and_is_idempotent() -> None:
     assert sent == [(100, "digest")]
 
 
-def test_failed_digest_releases_delivery_claim() -> None:
+def test_failed_digest_releases_delivery_claim(tmp_path) -> None:
     profiles = SimpleNamespace(
         list_profiles=lambda: [UserProfile(10, 100, "UTC", 7, 22)]
     )
-    claims = MemoryDeliveryClaimStore()
+    claims = FileDeliveryClaimStore(str(tmp_path / "claims.json"))
     now = datetime(2026, 6, 12, 7, 0, tzinfo=timezone.utc)
 
     result = send_due_digests(
@@ -111,45 +112,33 @@ def test_failed_digest_releases_delivery_claim() -> None:
     )
 
     assert result.failed == 1
-    assert not claims.claims
+    assert claims._read() == set()
 
 
-class FakeConversationClient:
-    def __init__(self) -> None:
-        self.rows = {}
+def test_file_user_profile_store_survives_new_instance(tmp_path) -> None:
+    path = str(tmp_path / "profiles.json")
+    first = UserProfileStore(path)
+    profile = UserProfile(10, 100, "Europe/Moscow", 10, 22)
 
-    def select(self, table, *, params):
-        state_type = params["state_type"].removeprefix("eq.")
-        return [
-            {"chat_id": chat_id, "payload": payload}
-            for (stored_type, chat_id), payload in self.rows.items()
-            if stored_type == state_type
-        ]
+    first.save(profile)
 
-    def upsert(self, table, payload, *, on_conflict):
-        self.rows[(payload["state_type"], payload["chat_id"])] = payload["payload"]
-
-    def delete(self, table, *, params):
-        state_type = params["state_type"].removeprefix("eq.")
-        chat_id = params.get("chat_id")
-        keys = [
-            key
-            for key in self.rows
-            if key[0] == state_type and (chat_id is None or key[1] == int(chat_id.removeprefix("eq.")))
-        ]
-        for key in keys:
-            del self.rows[key]
-        return bool(keys)
+    assert UserProfileStore(path).get(10) == profile
 
 
-def test_persistent_conversation_state_survives_new_mapping() -> None:
-    client = FakeConversationClient()
+def test_file_google_auth_session_store_survives_restart_and_encrypts_verifier(tmp_path) -> None:
+    path = str(tmp_path / "oauth_sessions.json")
     key = Fernet.generate_key().decode()
-    store = SupabaseConversationStateStore(client, key)
-    first = PersistentStateDict("draft", store)
+    session = GoogleAuthSession(
+        auth_url="https://accounts.google.test/auth",
+        state="state",
+        redirect_uri="https://bot.test/google/oauth/callback",
+        code_verifier="secret-verifier",
+    )
 
-    first[100] = {"kind": "task_create", "title": "Купить молоко"}
-    restored = PersistentStateDict("draft", SupabaseConversationStateStore(client, key))
+    GoogleAuthSessionStore(path, key).save(10, session)
+    restored = GoogleAuthSessionStore(path, key).get_by_state("state")
 
-    assert restored[100] == {"kind": "task_create", "title": "Купить молоко"}
-    assert "Купить молоко" not in next(iter(client.rows.values()))
+    assert restored is not None
+    assert restored[0] == 10
+    assert restored[1].code_verifier == "secret-verifier"
+    assert "secret-verifier" not in (tmp_path / "oauth_sessions.json").read_text(encoding="utf-8")

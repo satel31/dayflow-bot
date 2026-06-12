@@ -30,7 +30,6 @@ from dayflow.auth import (
 )
 from dayflow.calendar_service import CalendarEvent, GoogleCalendarService
 from dayflow.config import load_settings
-from dayflow.conversation_state_store import build_conversation_state_dict
 from dayflow.digest_subscriber_store import build_digest_subscriber_store
 from dayflow.group_store import build_event_group_store
 from dayflow.google_auth_session_store import build_google_auth_session_store
@@ -165,10 +164,10 @@ work_schedule_store = build_work_schedule_store(settings)
 work_schedule = work_schedule_store.load()
 user_profile_store = build_user_profile_store(settings)
 google_auth_session_store = build_google_auth_session_store(settings)
-pending_drafts: dict[int, Draft] = build_conversation_state_dict(settings, "draft")
-pending_clarifications: dict[int, PendingClarification] = build_conversation_state_dict(settings, "clarification")
-pending_selections: dict[int, PendingSelection] = build_conversation_state_dict(settings, "selection")
-pending_slot_selections: dict[int, PendingSlotSelection] = build_conversation_state_dict(settings, "slot_selection")
+pending_drafts: dict[int, Draft] = {}
+pending_clarifications: dict[int, PendingClarification] = {}
+pending_selections: dict[int, PendingSelection] = {}
+pending_slot_selections: dict[int, PendingSlotSelection] = {}
 pending_google_auth: dict[int, GoogleAuthSession] = {}
 user_calendar_services: dict[int, GoogleCalendarService] = {}
 user_tasks_services: dict[int, GoogleTasksService] = {}

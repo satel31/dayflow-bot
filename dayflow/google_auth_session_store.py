@@ -1,101 +1,81 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+import json
+from pathlib import Path
+
 from dayflow.auth import GoogleAuthSession
 from dayflow.config import Settings
 from dayflow.crypto import decrypt_text, encrypt_text
-from dayflow.supabase_client import SupabaseRestClient, build_supabase_client
 
 
-class InMemoryGoogleAuthSessionStore:
-    def __init__(self) -> None:
-        self.sessions: dict[int, GoogleAuthSession] = {}
-
-    def save(self, user_id: int, session: GoogleAuthSession) -> None:
-        self.sessions[int(user_id)] = session
-
-    def get_for_user(self, user_id: int) -> GoogleAuthSession | None:
-        return self.sessions.get(int(user_id))
-
-    def get_by_state(self, state: str) -> tuple[int, GoogleAuthSession] | None:
-        for user_id, session in self.sessions.items():
-            if session.state == state:
-                return user_id, session
-        return None
-
-    def delete(self, user_id: int) -> bool:
-        return self.sessions.pop(int(user_id), None) is not None
-
-    def cleanup_expired(self) -> int:
-        return 0
-
-
-class SupabaseGoogleAuthSessionStore:
-    def __init__(self, client: SupabaseRestClient, encryption_key: str = "") -> None:
-        self.client = client
+class GoogleAuthSessionStore:
+    def __init__(self, path: str, encryption_key: str = "") -> None:
+        self.path = Path(path)
         self.encryption_key = encryption_key
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.exists():
+            self._write([])
 
     def save(self, user_id: int, session: GoogleAuthSession) -> None:
         self.delete(user_id)
-        self.client.upsert(
-            "google_auth_sessions",
+        rows = self._read()
+        rows.append(
             {
                 "user_id": int(user_id),
                 "state": session.state,
                 "redirect_uri": session.redirect_uri,
                 "code_verifier": encrypt_text(session.code_verifier, self.encryption_key),
-            },
-            on_conflict="user_id",
+                "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
+            }
         )
+        self._write(rows)
 
     def get_for_user(self, user_id: int) -> GoogleAuthSession | None:
-        rows = self.client.select(
-            "google_auth_sessions",
-            params={
-                "select": "state,redirect_uri,code_verifier",
-                "user_id": f"eq.{int(user_id)}",
-                "limit": "1",
-            },
-        )
-        return _session_from_row(rows[0], self.encryption_key) if rows else None
+        row = next((item for item in self._valid_rows() if int(item["user_id"]) == int(user_id)), None)
+        return self._session(row) if row else None
 
     def get_by_state(self, state: str) -> tuple[int, GoogleAuthSession] | None:
-        rows = self.client.select(
-            "google_auth_sessions",
-            params={
-                "select": "user_id,state,redirect_uri,code_verifier",
-                "state": f"eq.{state}",
-                "limit": "1",
-            },
-        )
-        if not rows:
-            return None
-        return int(rows[0]["user_id"]), _session_from_row(rows[0], self.encryption_key)
+        row = next((item for item in self._valid_rows() if item["state"] == state), None)
+        return (int(row["user_id"]), self._session(row)) if row else None
 
     def delete(self, user_id: int) -> bool:
-        return self.client.delete("google_auth_sessions", params={"user_id": f"eq.{int(user_id)}"})
+        rows = self._read()
+        filtered = [item for item in rows if int(item["user_id"]) != int(user_id)]
+        if len(filtered) == len(rows):
+            return False
+        self._write(filtered)
+        return True
 
     def cleanup_expired(self) -> int:
-        rows = self.client.select(
-            "google_auth_sessions",
-            params={"select": "user_id", "expires_at": "lt.now()"},
+        rows = self._read()
+        valid = self._valid_rows(rows)
+        if len(valid) != len(rows):
+            self._write(valid)
+        return len(rows) - len(valid)
+
+    def _valid_rows(self, rows: list[dict] | None = None) -> list[dict]:
+        now = datetime.now(timezone.utc)
+        return [
+            item
+            for item in (rows if rows is not None else self._read())
+            if datetime.fromisoformat(item["expires_at"]) > now
+        ]
+
+    def _session(self, row: dict) -> GoogleAuthSession:
+        return GoogleAuthSession(
+            auth_url="",
+            state=row["state"],
+            redirect_uri=row["redirect_uri"],
+            code_verifier=decrypt_text(row["code_verifier"], self.encryption_key),
         )
-        for row in rows:
-            self.delete(int(row["user_id"]))
-        return len(rows)
+
+    def _read(self) -> list[dict]:
+        return json.loads(self.path.read_text(encoding="utf-8"))
+
+    def _write(self, data: list[dict]) -> None:
+        self.path.write_text(json.dumps(data, ensure_ascii=True, indent=2), encoding="utf-8")
 
 
-def build_google_auth_session_store(settings: Settings):
-    if settings.persistent_backend == "supabase":
-        return SupabaseGoogleAuthSessionStore(build_supabase_client(settings), settings.data_encryption_key)
-    if settings.persistent_backend != "file":
-        raise ValueError(f"Unsupported PERSISTENT_BACKEND: {settings.persistent_backend}")
-    return InMemoryGoogleAuthSessionStore()
-
-
-def _session_from_row(row: dict, encryption_key: str = "") -> GoogleAuthSession:
-    return GoogleAuthSession(
-        auth_url="",
-        state=str(row["state"]),
-        redirect_uri=str(row["redirect_uri"]),
-        code_verifier=decrypt_text(str(row["code_verifier"]), encryption_key),
-    )
+def build_google_auth_session_store(settings: Settings) -> GoogleAuthSessionStore:
+    return GoogleAuthSessionStore(settings.google_auth_sessions_path, settings.data_encryption_key)

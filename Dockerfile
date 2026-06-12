@@ -12,4 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY bot.py .
 COPY dayflow ./dayflow
 
+VOLUME ["/app/data"]
+
 CMD ["sh", "-c", "uvicorn dayflow.web_app:app --host 0.0.0.0 --port ${PORT}"]
