@@ -32,8 +32,10 @@ from dayflow.calendar_service import CalendarEvent, GoogleCalendarService
 from dayflow.config import load_settings
 from dayflow.digest_subscriber_store import build_digest_subscriber_store
 from dayflow.group_store import build_event_group_store
+from dayflow.google_auth_session_store import build_google_auth_session_store
 from dayflow.tasks_service import GoogleTasksService, TaskItem
 from dayflow.timezone_utils import get_timezone
+from dayflow.user_profile_store import build_user_profile_store
 from dayflow.work_schedule_store import (
     WEEKDAY_LABELS,
     WorkSchedule,
@@ -160,6 +162,8 @@ group_store = build_event_group_store(settings)
 digest_subscriber_store = build_digest_subscriber_store(settings)
 work_schedule_store = build_work_schedule_store(settings)
 work_schedule = work_schedule_store.load()
+user_profile_store = build_user_profile_store(settings)
+google_auth_session_store = build_google_auth_session_store(settings)
 pending_drafts: dict[int, Draft] = {}
 pending_clarifications: dict[int, PendingClarification] = {}
 pending_selections: dict[int, PendingSelection] = {}
@@ -1366,6 +1370,7 @@ async def connect_google_command(update: Update, context: ContextTypes.DEFAULT_T
         await safe_reply_text(update.message, f"Не удалось подготовить подключение Google: {exc}")
         return
     pending_google_auth[user_id] = session
+    google_auth_session_store.save(user_id, session)
     await safe_reply_text(
         update.message,
         "Откройте ссылку, войдите в нужный Google-аккаунт и после редиректа пришлите сюда полный URL "
@@ -1377,6 +1382,7 @@ async def connect_google_command(update: Update, context: ContextTypes.DEFAULT_T
 async def disconnect_google_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = get_actor_id(update)
     pending_google_auth.pop(user_id, None)
+    google_auth_session_store.delete(user_id)
     reset_user_google_services(user_id)
     digest_subscriber_store.remove(user_id)
     if disconnect_google_account(settings, user_id):
@@ -1395,6 +1401,7 @@ async def digest_subscribe_command(update: Update, context: ContextTypes.DEFAULT
         )
         return
     digest_subscriber_store.add(user_id=user_id, chat_id=chat_id)
+    user_profile_store.ensure(user_id=user_id, chat_id=chat_id, settings=settings)
     await safe_reply_text(update.message, "Ежедневная рассылка включена для этого чата.")
 
 
@@ -1548,10 +1555,12 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     chat_id = update.effective_chat.id
     user_id = get_actor_id(update)
     text = update.message.text.strip()
-    if user_id in pending_google_auth and text.startswith("http://localhost:"):
+    google_auth_session = pending_google_auth.get(user_id) or google_auth_session_store.get_for_user(user_id)
+    if google_auth_session and text.startswith("http://localhost:"):
         try:
-            complete_google_auth(settings, user_id, pending_google_auth[user_id], text)
+            complete_google_auth(settings, user_id, google_auth_session, text)
             pending_google_auth.pop(user_id, None)
+            google_auth_session_store.delete(user_id)
             reset_user_google_services(user_id)
         except Exception as exc:
             await safe_reply_text(update.message, f"Не удалось завершить подключение Google: {exc}")

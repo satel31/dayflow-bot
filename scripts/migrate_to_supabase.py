@@ -38,6 +38,17 @@ def main() -> None:
             {"user_id": subscriber.user_id, "chat_id": subscriber.chat_id},
             on_conflict="user_id",
         )
+        client.upsert(
+            "user_profiles",
+            {
+                "user_id": subscriber.user_id,
+                "chat_id": subscriber.chat_id,
+                "timezone": settings.timezone,
+                "digest_morning_hour": settings.digest_morning_hour,
+                "digest_evening_hour": settings.digest_evening_hour,
+            },
+            on_conflict="user_id",
+        )
 
     groups = EventGroupStore(settings.event_groups_path).list_groups()
     client.set_app_state("event_groups", groups)
@@ -58,7 +69,7 @@ def main() -> None:
 
     print(
         f"Migrated {token_count} Google tokens, {len(subscribers)} digest subscribers, "
-        f"{len(groups)} event groups, and the work schedule."
+        f"{len(groups)} event groups, {len(subscribers)} user profiles, and the work schedule."
     )
 
 

@@ -7,8 +7,10 @@ import httpx
 from dayflow import auth
 from dayflow.config import Settings
 from dayflow.digest_subscriber_store import SupabaseDigestSubscriberStore
+from dayflow.google_auth_session_store import SupabaseGoogleAuthSessionStore
 from dayflow.group_store import SupabaseEventGroupStore
 from dayflow.supabase_client import SupabaseRestClient
+from dayflow.user_profile_store import SupabaseUserProfileStore
 from dayflow.work_schedule_store import SupabaseWorkScheduleStore, WorkSchedule
 
 
@@ -139,3 +141,57 @@ def test_supabase_google_token_storage(monkeypatch) -> None:
     assert json.loads(auth._read_token_json(settings, 10)) == {"token": "secret"}
     assert auth.disconnect_google_account(settings, 10) is True
     assert auth.google_token_exists(settings, 10) is False
+
+
+class FakeTableClient:
+    def __init__(self) -> None:
+        self.tables = {}
+
+    def upsert(self, table, payload, *, on_conflict):
+        self.tables.setdefault(table, {})[payload[on_conflict]] = dict(payload)
+
+    def select(self, table, *, params=None):
+        rows = list(self.tables.get(table, {}).values())
+        for key, value in params.items():
+            if value.startswith("eq."):
+                expected = value.removeprefix("eq.")
+                rows = [row for row in rows if str(row[key]) == expected]
+        return rows[: int(params.get("limit", len(rows)))]
+
+    def delete(self, table, *, params):
+        user_id = int(params["user_id"].removeprefix("eq."))
+        return self.tables.get(table, {}).pop(user_id, None) is not None
+
+
+def test_supabase_user_profile_persists_defaults_and_updated_chat() -> None:
+    client = FakeTableClient()
+    store = SupabaseUserProfileStore(client)
+    settings = make_supabase_settings()
+
+    created = store.ensure(10, 100, settings)
+    updated = store.ensure(10, 101, settings)
+
+    assert created.timezone == "Europe/Moscow"
+    assert updated.chat_id == 101
+    assert store.get(10) == updated
+
+
+def test_supabase_google_auth_session_survives_new_store_instance() -> None:
+    client = FakeTableClient()
+    first_store = SupabaseGoogleAuthSessionStore(client)
+    session = auth.GoogleAuthSession(
+        auth_url="https://accounts.google.test/auth",
+        state="oauth-state",
+        redirect_uri="https://bot.test/google/oauth/callback",
+        code_verifier="verifier",
+    )
+
+    first_store.save(10, session)
+    restored = SupabaseGoogleAuthSessionStore(client).get_by_state("oauth-state")
+
+    assert restored is not None
+    assert restored[0] == 10
+    assert restored[1].state == session.state
+    assert restored[1].redirect_uri == session.redirect_uri
+    assert restored[1].code_verifier == session.code_verifier
+    assert first_store.delete(10) is True
