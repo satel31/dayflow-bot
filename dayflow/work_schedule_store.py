@@ -4,6 +4,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from dayflow.config import Settings
+from dayflow.supabase_client import SupabaseRestClient, build_supabase_client
+
 
 WEEKDAY_LABELS = {
     0: "пн",
@@ -81,6 +84,56 @@ class WorkScheduleStore:
             start_minutes=schedule.start_minutes,
             end_minutes=schedule.end_minutes,
         )
+
+
+class SupabaseWorkScheduleStore(WorkScheduleStore):
+    def __init__(self, client: SupabaseRestClient, default_start_hour: int, default_end_hour: int) -> None:
+        self.client = client
+        self.default = WorkSchedule(
+            weekdays=(0, 1, 2, 3, 4),
+            start_minutes=default_start_hour * 60,
+            end_minutes=default_end_hour * 60,
+        )
+
+    def load(self) -> WorkSchedule:
+        payload = self.client.get_app_state("work_schedule")
+        if not isinstance(payload, dict):
+            return self.default
+        return self._validate(
+            WorkSchedule(
+                weekdays=tuple(payload.get("weekdays", self.default.weekdays)),
+                start_minutes=int(payload.get("start_minutes", self.default.start_minutes)),
+                end_minutes=int(payload.get("end_minutes", self.default.end_minutes)),
+            )
+        )
+
+    def save(self, schedule: WorkSchedule) -> WorkSchedule:
+        schedule = self._validate(schedule)
+        self.client.set_app_state(
+            "work_schedule",
+            {
+                "weekdays": list(schedule.weekdays),
+                "start_minutes": schedule.start_minutes,
+                "end_minutes": schedule.end_minutes,
+            },
+        )
+        return schedule
+
+
+def build_work_schedule_store(settings: Settings):
+    if settings.persistent_backend == "supabase":
+        return SupabaseWorkScheduleStore(
+            build_supabase_client(settings),
+            settings.workday_start_hour,
+            settings.workday_end_hour,
+        )
+    if settings.persistent_backend != "file":
+        raise ValueError(f"Unsupported PERSISTENT_BACKEND: {settings.persistent_backend}")
+    return WorkScheduleStore(
+        settings.work_schedule_path,
+        settings.workday_start_hour,
+        settings.workday_end_hour,
+    )
 
 
 def format_minutes(total_minutes: int) -> str:

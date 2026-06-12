@@ -81,6 +81,31 @@ uvicorn dayflow.web_app:app --host 0.0.0.0 --port 8000
 - добавьте секреты и остальные настройки из `.env.example` как environment variables;
 - не загружайте локальные `.env`, `credentials.json`, `token.json` и каталог `data`.
 
+## Supabase persistent state
+
+Для хранения Google-токенов и подписчиков рассылки выполните
+`scripts/supabase_schema.sql` в Supabase SQL Editor. Затем задайте на сервере:
+
+```env
+PERSISTENT_BACKEND=supabase
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
+
+`SUPABASE_SERVICE_ROLE_KEY` дает полный доступ к данным и должен храниться только
+в секретах Koyeb. При `PERSISTENT_BACKEND=file` бот продолжает использовать
+локальные JSON-файлы.
+
+Чтобы один раз скопировать текущие локальные токены и настройки в Supabase,
+сначала заполните `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY`, затем выполните:
+
+```powershell
+venv\Scripts\python.exe scripts\migrate_to_supabase.py
+```
+
+Скрипт не удаляет и не изменяет локальные данные. После проверки миграции
+установите `PERSISTENT_BACKEND=supabase` для серверного приложения.
+
 Для OpenRouter обычно достаточно указать:
 
 ```env

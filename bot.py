@@ -26,18 +26,18 @@ from dayflow.auth import (
     build_google_auth_session,
     complete_google_auth,
     disconnect_google_account,
-    token_path_for_user,
+    google_token_exists,
 )
 from dayflow.calendar_service import CalendarEvent, GoogleCalendarService
 from dayflow.config import load_settings
-from dayflow.digest_subscriber_store import DigestSubscriberStore
-from dayflow.group_store import EventGroupStore
+from dayflow.digest_subscriber_store import build_digest_subscriber_store
+from dayflow.group_store import build_event_group_store
 from dayflow.tasks_service import GoogleTasksService, TaskItem
 from dayflow.timezone_utils import get_timezone
 from dayflow.work_schedule_store import (
     WEEKDAY_LABELS,
     WorkSchedule,
-    WorkScheduleStore,
+    build_work_schedule_store,
     format_minutes,
     parse_time_to_minutes,
     parse_weekdays,
@@ -156,13 +156,9 @@ settings = load_settings()
 calendar_service = GoogleCalendarService(settings)
 assistant_service = AssistantService(settings)
 tasks_service = GoogleTasksService(settings)
-group_store = EventGroupStore(settings.event_groups_path)
-digest_subscriber_store = DigestSubscriberStore(settings.digest_subscribers_path)
-work_schedule_store = WorkScheduleStore(
-    settings.work_schedule_path,
-    settings.workday_start_hour,
-    settings.workday_end_hour,
-)
+group_store = build_event_group_store(settings)
+digest_subscriber_store = build_digest_subscriber_store(settings)
+work_schedule_store = build_work_schedule_store(settings)
 work_schedule = work_schedule_store.load()
 pending_drafts: dict[int, Draft] = {}
 pending_clarifications: dict[int, PendingClarification] = {}
@@ -222,7 +218,7 @@ def reset_user_google_services(user_id: int) -> None:
 
 
 def user_google_token_exists(user_id: int) -> bool:
-    return token_path_for_user(settings, user_id).exists()
+    return google_token_exists(settings, user_id)
 
 
 def parse_date(raw_value: str) -> date:

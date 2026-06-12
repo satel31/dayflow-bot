@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import random
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 
 from dayflow.config import Settings
+from dayflow.supabase_client import build_supabase_client
 
 
 GOOGLE_SCOPES = [
@@ -36,16 +38,12 @@ def token_path_for_user(settings: Settings, user_id: int) -> Path:
 
 def load_google_credentials(settings: Settings, user_id: int | None = None) -> Credentials:
     credentials_path = Path(settings.google_credentials_path)
-    token_path = _resolve_token_path(settings, user_id)
-    creds = None
-
-    if token_path.exists():
-        creds = Credentials.from_authorized_user_file(str(token_path), GOOGLE_SCOPES)
+    token_json = _read_token_json(settings, user_id)
+    creds = Credentials.from_authorized_user_info(json.loads(token_json), GOOGLE_SCOPES) if token_json else None
 
     if creds and creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        token_path.parent.mkdir(parents=True, exist_ok=True)
-        token_path.write_text(creds.to_json(), encoding="utf-8")
+        _write_token_json(settings, user_id, creds.to_json())
         return creds
 
     if creds and creds.valid:
@@ -109,13 +107,16 @@ def complete_google_auth(
     )
     flow.fetch_token(authorization_response=authorization_response.replace("http://", "https://", 1))
     creds = flow.credentials
-    token_path = token_path_for_user(settings, user_id)
-    token_path.parent.mkdir(parents=True, exist_ok=True)
-    token_path.write_text(creds.to_json(), encoding="utf-8")
+    _write_token_json(settings, user_id, creds.to_json())
     return creds
 
 
 def disconnect_google_account(settings: Settings, user_id: int) -> bool:
+    if settings.persistent_backend == "supabase":
+        return build_supabase_client(settings).delete(
+            "google_tokens",
+            params={"user_id": f"eq.{int(user_id)}"},
+        )
     token_path = token_path_for_user(settings, user_id)
     if not token_path.exists():
         return False
@@ -123,7 +124,46 @@ def disconnect_google_account(settings: Settings, user_id: int) -> bool:
     return True
 
 
+def google_token_exists(settings: Settings, user_id: int) -> bool:
+    if settings.persistent_backend == "supabase":
+        rows = build_supabase_client(settings).select(
+            "google_tokens",
+            params={"select": "user_id", "user_id": f"eq.{int(user_id)}", "limit": "1"},
+        )
+        return bool(rows)
+    return token_path_for_user(settings, user_id).exists()
+
+
 def _resolve_token_path(settings: Settings, user_id: int | None) -> Path:
     if user_id is None:
         return Path(settings.google_token_path)
     return token_path_for_user(settings, user_id)
+
+
+def _read_token_json(settings: Settings, user_id: int | None) -> str | None:
+    if settings.persistent_backend == "supabase" and user_id is not None:
+        rows = build_supabase_client(settings).select(
+            "google_tokens",
+            params={"select": "token_json", "user_id": f"eq.{int(user_id)}", "limit": "1"},
+        )
+        if not rows:
+            return None
+        token_json = rows[0]["token_json"]
+        return json.dumps(token_json) if isinstance(token_json, dict) else str(token_json)
+    token_path = _resolve_token_path(settings, user_id)
+    return token_path.read_text(encoding="utf-8") if token_path.exists() else None
+
+
+def _write_token_json(settings: Settings, user_id: int | None, token_json: str) -> None:
+    if settings.persistent_backend == "supabase":
+        if user_id is None:
+            raise ValueError("Supabase token storage requires a Telegram user_id.")
+        build_supabase_client(settings).upsert(
+            "google_tokens",
+            {"user_id": int(user_id), "token_json": json.loads(token_json)},
+            on_conflict="user_id",
+        )
+        return
+    token_path = _resolve_token_path(settings, user_id)
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    token_path.write_text(token_json, encoding="utf-8")

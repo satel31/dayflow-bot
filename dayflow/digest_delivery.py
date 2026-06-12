@@ -6,7 +6,7 @@ from typing import Callable
 
 from dayflow.config import Settings
 from dayflow.digest_service import DigestKind, build_daily_digest_for_user
-from dayflow.digest_subscriber_store import DigestSubscriber, DigestSubscriberStore
+from dayflow.digest_subscriber_store import DigestSubscriber, DigestSubscriberStore, build_digest_subscriber_store
 from dayflow.telegram_sender import send_telegram_message
 
 
@@ -34,7 +34,7 @@ def send_daily_digest_to_subscribers(
     build_digest: DigestBuilder = build_daily_digest_for_user,
     send_message: MessageSender = send_telegram_message,
 ) -> DigestDeliveryResult:
-    subscriber_store = store or DigestSubscriberStore(settings.digest_subscribers_path)
+    subscriber_store = store or build_digest_subscriber_store(settings)
     subscribers = subscriber_store.list_subscribers()
     sent = 0
     errors: list[str] = []

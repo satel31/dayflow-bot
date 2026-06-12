@@ -42,6 +42,9 @@ class Settings:
     celery_beat_schedule_path: str = "data/celerybeat-schedule"
     webhook_base_url: str = ""
     telegram_webhook_secret: str = ""
+    persistent_backend: str = "file"
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
 
 
 def load_settings() -> Settings:
@@ -86,4 +89,7 @@ def load_settings() -> Settings:
         ).strip(),
         webhook_base_url=os.getenv("WEBHOOK_BASE_URL", "").strip().rstrip("/"),
         telegram_webhook_secret=os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip(),
+        persistent_backend=os.getenv("PERSISTENT_BACKEND", "file").strip().casefold(),
+        supabase_url=os.getenv("SUPABASE_URL", "").strip().rstrip("/"),
+        supabase_service_role_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip(),
     )
