@@ -10,6 +10,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 
 from dayflow.config import Settings
+from dayflow.crypto import decrypt_text, encrypt_text
 from dayflow.supabase_client import build_supabase_client
 
 
@@ -66,15 +67,13 @@ def load_google_credentials(settings: Settings, user_id: int | None = None) -> C
 
 
 def build_google_auth_session(settings: Settings, user_id: int) -> GoogleAuthSession:
-    credentials_path = Path(settings.google_credentials_path)
-    if not credentials_path.exists():
-        raise RuntimeError(
-            "Не найден credentials.json. Скачайте OAuth client credentials из Google Cloud Console."
-        )
-
-    redirect_uri = f"http://localhost:{random.randint(49152, 65535)}/"
-    flow = Flow.from_client_secrets_file(
-        str(credentials_path),
+    redirect_uri = (
+        f"{settings.webhook_base_url}/google/oauth/callback"
+        if settings.webhook_base_url
+        else f"http://localhost:{random.randint(49152, 65535)}/"
+    )
+    flow = Flow.from_client_config(
+        _load_google_client_config(settings),
         scopes=GOOGLE_SCOPES,
         redirect_uri=redirect_uri,
         autogenerate_code_verifier=True,
@@ -96,9 +95,8 @@ def complete_google_auth(
     session: GoogleAuthSession,
     authorization_response: str,
 ) -> Credentials:
-    credentials_path = Path(settings.google_credentials_path)
-    flow = Flow.from_client_secrets_file(
-        str(credentials_path),
+    flow = Flow.from_client_config(
+        _load_google_client_config(settings),
         scopes=GOOGLE_SCOPES,
         state=session.state,
         redirect_uri=session.redirect_uri,
@@ -149,7 +147,8 @@ def _read_token_json(settings: Settings, user_id: int | None) -> str | None:
         if not rows:
             return None
         token_json = rows[0]["token_json"]
-        return json.dumps(token_json) if isinstance(token_json, dict) else str(token_json)
+        serialized = json.dumps(token_json) if isinstance(token_json, dict) else str(token_json)
+        return decrypt_text(serialized, settings.data_encryption_key)
     token_path = _resolve_token_path(settings, user_id)
     return token_path.read_text(encoding="utf-8") if token_path.exists() else None
 
@@ -160,10 +159,21 @@ def _write_token_json(settings: Settings, user_id: int | None, token_json: str) 
             raise ValueError("Supabase token storage requires a Telegram user_id.")
         build_supabase_client(settings).upsert(
             "google_tokens",
-            {"user_id": int(user_id), "token_json": json.loads(token_json)},
+            {"user_id": int(user_id), "token_json": encrypt_text(token_json, settings.data_encryption_key)},
             on_conflict="user_id",
         )
         return
     token_path = _resolve_token_path(settings, user_id)
     token_path.parent.mkdir(parents=True, exist_ok=True)
     token_path.write_text(token_json, encoding="utf-8")
+
+
+def _load_google_client_config(settings: Settings) -> dict:
+    if settings.google_credentials_json:
+        return json.loads(settings.google_credentials_json)
+    credentials_path = Path(settings.google_credentials_path)
+    if credentials_path.exists():
+        return json.loads(credentials_path.read_text(encoding="utf-8"))
+    raise RuntimeError(
+        "Не настроены GOOGLE_CREDENTIALS_JSON или GOOGLE_CREDENTIALS_PATH."
+    )

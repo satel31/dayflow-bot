@@ -1,19 +1,25 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 import logging
 import secrets
 
 from fastapi import FastAPI, Header, HTTPException, Request, status
+from fastapi.responses import HTMLResponse
 from telegram import Update
 from telegram.ext import Application
 
 import bot
 from dayflow.config import Settings, load_settings
+from dayflow.conversation_state_store import SupabaseConversationStateStore
+from dayflow.cron_service import send_due_digests
+from dayflow.supabase_client import build_supabase_client
 
 
 logger = logging.getLogger(__name__)
 TELEGRAM_WEBHOOK_PATH = "/telegram/webhook"
+GOOGLE_OAUTH_CALLBACK_PATH = "/google/oauth/callback"
 
 
 def create_web_app(
@@ -41,6 +47,18 @@ def create_web_app(
             logger.info("Telegram webhook configured: %s", webhook_url)
         else:
             logger.warning("WEBHOOK_BASE_URL is empty; Telegram webhook was not configured.")
+        try:
+            bot.google_auth_session_store.cleanup_expired()
+        except Exception:
+            logger.exception("Failed to clean expired Google OAuth sessions")
+        if web_settings.persistent_backend == "supabase":
+            try:
+                SupabaseConversationStateStore(
+                    build_supabase_client(web_settings),
+                    web_settings.data_encryption_key,
+                ).cleanup_expired()
+            except Exception:
+                logger.exception("Failed to clean expired conversation states")
 
         yield
 
@@ -53,7 +71,13 @@ def create_web_app(
 
     @app.get("/health")
     async def health() -> dict[str, str]:
-        return {"status": "ok"}
+        if web_settings.persistent_backend == "supabase":
+            try:
+                await asyncio.to_thread(build_supabase_client(web_settings).ping)
+            except Exception as exc:
+                logger.exception("Supabase health check failed")
+                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Supabase unavailable") from exc
+        return {"status": "ok", "storage": web_settings.persistent_backend}
 
     @app.post(TELEGRAM_WEBHOOK_PATH)
     async def telegram_webhook(
@@ -70,6 +94,54 @@ def create_web_app(
         update = Update.de_json(payload, application.bot)
         await application.process_update(update)
         return {"ok": True}
+
+    @app.get(GOOGLE_OAUTH_CALLBACK_PATH, response_class=HTMLResponse)
+    async def google_oauth_callback(request: Request, state: str = "") -> str:
+        stored = bot.google_auth_session_store.get_by_state(state)
+        if not stored:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OAuth session is missing or expired.")
+        user_id, session = stored
+        try:
+            await asyncio.to_thread(
+                bot.complete_google_auth,
+                web_settings,
+                user_id,
+                session,
+                str(request.url),
+            )
+            bot.google_auth_session_store.delete(user_id)
+            bot.pending_google_auth.pop(user_id, None)
+            bot.reset_user_google_services(user_id)
+            profile = bot.user_profile_store.get(user_id)
+            await application.bot.send_message(
+                chat_id=profile.chat_id if profile else user_id,
+                text="Google-аккаунт подключен. Можно вернуться в Telegram.",
+            )
+        except Exception as exc:
+            logger.exception("Google OAuth callback failed for user_id=%s", user_id)
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to complete Google OAuth.") from exc
+        return "<html><body><h1>Google подключен</h1><p>Можно закрыть эту страницу и вернуться в Telegram.</p></body></html>"
+
+    async def run_digest(kind: str, secret: str | None) -> dict:
+        if not web_settings.cron_secret or not secrets.compare_digest(secret or "", web_settings.cron_secret):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid cron secret.")
+        result = await asyncio.to_thread(send_due_digests, web_settings, kind)
+        logger.info("Cron digest kind=%s result=%s", kind, result)
+        return {
+            "kind": kind,
+            "due": result.due,
+            "sent": result.sent,
+            "skipped": result.skipped,
+            "failed": result.failed,
+        }
+
+    @app.post("/cron/morning-digest")
+    async def morning_digest(x_cron_secret: str | None = Header(default=None)) -> dict:
+        return await run_digest("morning", x_cron_secret)
+
+    @app.post("/cron/evening-digest")
+    async def evening_digest(x_cron_secret: str | None = Header(default=None)) -> dict:
+        return await run_digest("evening", x_cron_secret)
 
     return app
 

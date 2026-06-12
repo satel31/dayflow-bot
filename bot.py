@@ -30,6 +30,7 @@ from dayflow.auth import (
 )
 from dayflow.calendar_service import CalendarEvent, GoogleCalendarService
 from dayflow.config import load_settings
+from dayflow.conversation_state_store import build_conversation_state_dict
 from dayflow.digest_subscriber_store import build_digest_subscriber_store
 from dayflow.group_store import build_event_group_store
 from dayflow.google_auth_session_store import build_google_auth_session_store
@@ -164,10 +165,10 @@ work_schedule_store = build_work_schedule_store(settings)
 work_schedule = work_schedule_store.load()
 user_profile_store = build_user_profile_store(settings)
 google_auth_session_store = build_google_auth_session_store(settings)
-pending_drafts: dict[int, Draft] = {}
-pending_clarifications: dict[int, PendingClarification] = {}
-pending_selections: dict[int, PendingSelection] = {}
-pending_slot_selections: dict[int, PendingSlotSelection] = {}
+pending_drafts: dict[int, Draft] = build_conversation_state_dict(settings, "draft")
+pending_clarifications: dict[int, PendingClarification] = build_conversation_state_dict(settings, "clarification")
+pending_selections: dict[int, PendingSelection] = build_conversation_state_dict(settings, "selection")
+pending_slot_selections: dict[int, PendingSlotSelection] = build_conversation_state_dict(settings, "slot_selection")
 pending_google_auth: dict[int, GoogleAuthSession] = {}
 user_calendar_services: dict[int, GoogleCalendarService] = {}
 user_tasks_services: dict[int, GoogleTasksService] = {}
@@ -1350,6 +1351,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/disconnect_google\n"
         "/digest_subscribe\n"
         "/digest_unsubscribe\n"
+        "/timezone Europe/Moscow\n"
+        "/digest_time 10 22\n"
         "/today YYYY-MM-DD\n"
         "/slots YYYY-MM-DD [minutes]\n"
         "/groups\n"
@@ -1373,9 +1376,12 @@ async def connect_google_command(update: Update, context: ContextTypes.DEFAULT_T
     google_auth_session_store.save(user_id, session)
     await safe_reply_text(
         update.message,
-        "Откройте ссылку, войдите в нужный Google-аккаунт и после редиректа пришлите сюда полный URL "
-        "из адресной строки, который начинается с http://localhost:\n\n"
-        f"{session.auth_url}"
+        (
+            "Откройте ссылку и войдите в нужный Google-аккаунт. После подключения вернитесь в Telegram:\n\n"
+            if settings.webhook_base_url
+            else "Откройте ссылку, войдите в Google и пришлите сюда полный localhost URL:\n\n"
+        )
+        + session.auth_url
     )
 
 
@@ -1411,6 +1417,50 @@ async def digest_unsubscribe_command(update: Update, context: ContextTypes.DEFAU
         await safe_reply_text(update.message, "Ежедневная рассылка отключена.")
         return
     await safe_reply_text(update.message, "Ежедневная рассылка уже была отключена.")
+
+
+async def timezone_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = get_actor_id(update)
+    chat_id = update.effective_chat.id
+    profile = user_profile_store.ensure(user_id, chat_id, settings)
+    if not context.args:
+        await safe_reply_text(update.message, f"Ваш часовой пояс: {profile.timezone}\nФормат: /timezone Europe/Moscow")
+        return
+    timezone_name = context.args[0].strip()
+    try:
+        get_timezone(timezone_name)
+    except Exception:
+        await safe_reply_text(update.message, "Неизвестный часовой пояс. Пример: Europe/Moscow")
+        return
+    user_profile_store.save(replace(profile, timezone=timezone_name))
+    await safe_reply_text(update.message, f"Часовой пояс сохранён: {timezone_name}")
+
+
+async def digest_time_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = get_actor_id(update)
+    chat_id = update.effective_chat.id
+    profile = user_profile_store.ensure(user_id, chat_id, settings)
+    if not context.args:
+        await safe_reply_text(
+            update.message,
+            f"Рассылки: утро {profile.digest_morning_hour:02d}:00, вечер {profile.digest_evening_hour:02d}:00\n"
+            "Формат: /digest_time 10 22",
+        )
+        return
+    try:
+        morning_hour, evening_hour = (int(value) for value in context.args[:2])
+        if not (0 <= morning_hour <= 23 and 0 <= evening_hour <= 23):
+            raise ValueError
+    except (ValueError, TypeError):
+        await safe_reply_text(update.message, "Формат: /digest_time 10 22, часы должны быть от 0 до 23.")
+        return
+    user_profile_store.save(
+        replace(profile, digest_morning_hour=morning_hour, digest_evening_hour=evening_hour)
+    )
+    await safe_reply_text(
+        update.message,
+        f"Время рассылок сохранено: утро {morning_hour:02d}:00, вечер {evening_hour:02d}:00.",
+    )
 
 
 async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2318,6 +2368,8 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("disconnect_google", disconnect_google_command))
     application.add_handler(CommandHandler("digest_subscribe", digest_subscribe_command))
     application.add_handler(CommandHandler("digest_unsubscribe", digest_unsubscribe_command))
+    application.add_handler(CommandHandler("timezone", timezone_command))
+    application.add_handler(CommandHandler("digest_time", digest_time_command))
     application.add_handler(CommandHandler("today", today_command))
     application.add_handler(CommandHandler("slots", slots_command))
     application.add_handler(CommandHandler("groups", groups_command))

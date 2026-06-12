@@ -56,6 +56,20 @@ class SupabaseRestClient:
         )
         response.raise_for_status()
 
+    def insert_ignore(self, table: str, payload: dict[str, Any], *, on_conflict: str) -> bool:
+        response = self._client.post(
+            f"/{table}",
+            params={"on_conflict": on_conflict},
+            headers={"Prefer": "resolution=ignore-duplicates,return=representation"},
+            json=payload,
+        )
+        response.raise_for_status()
+        result = response.json()
+        return isinstance(result, list) and bool(result)
+
+    def ping(self) -> None:
+        self.select("app_state", params={"select": "key", "limit": "1"})
+
     def delete(self, table: str, *, params: dict[str, str]) -> bool:
         response = self._client.delete(
             f"/{table}",

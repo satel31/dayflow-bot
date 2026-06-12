@@ -45,6 +45,9 @@ class Settings:
     persistent_backend: str = "file"
     supabase_url: str = ""
     supabase_service_role_key: str = ""
+    google_credentials_json: str = ""
+    cron_secret: str = ""
+    data_encryption_key: str = ""
 
 
 def load_settings() -> Settings:
@@ -92,4 +95,7 @@ def load_settings() -> Settings:
         persistent_backend=os.getenv("PERSISTENT_BACKEND", "file").strip().casefold(),
         supabase_url=os.getenv("SUPABASE_URL", "").strip().rstrip("/"),
         supabase_service_role_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip(),
+        google_credentials_json=os.getenv("GOOGLE_CREDENTIALS_JSON", "").strip(),
+        cron_secret=os.getenv("CRON_SECRET", "").strip(),
+        data_encryption_key=os.getenv("DATA_ENCRYPTION_KEY", "").strip(),
     )

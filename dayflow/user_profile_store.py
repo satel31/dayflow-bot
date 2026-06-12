@@ -22,6 +22,9 @@ class InMemoryUserProfileStore:
     def get(self, user_id: int) -> UserProfile | None:
         return self.profiles.get(int(user_id))
 
+    def list_profiles(self) -> list[UserProfile]:
+        return list(self.profiles.values())
+
     def ensure(self, user_id: int, chat_id: int, settings: Settings) -> UserProfile:
         current = self.get(user_id)
         profile = UserProfile(
@@ -31,6 +34,10 @@ class InMemoryUserProfileStore:
             digest_morning_hour=current.digest_morning_hour if current else settings.digest_morning_hour,
             digest_evening_hour=current.digest_evening_hour if current else settings.digest_evening_hour,
         )
+        self.profiles[profile.user_id] = profile
+        return profile
+
+    def save(self, profile: UserProfile) -> UserProfile:
         self.profiles[profile.user_id] = profile
         return profile
 
@@ -50,6 +57,13 @@ class SupabaseUserProfileStore:
         )
         return _profile_from_row(rows[0]) if rows else None
 
+    def list_profiles(self) -> list[UserProfile]:
+        rows = self.client.select(
+            "user_profiles",
+            params={"select": "user_id,chat_id,timezone,digest_morning_hour,digest_evening_hour"},
+        )
+        return [_profile_from_row(row) for row in rows]
+
     def ensure(self, user_id: int, chat_id: int, settings: Settings) -> UserProfile:
         current = self.get(user_id)
         profile = UserProfile(
@@ -59,6 +73,9 @@ class SupabaseUserProfileStore:
             digest_morning_hour=current.digest_morning_hour if current else settings.digest_morning_hour,
             digest_evening_hour=current.digest_evening_hour if current else settings.digest_evening_hour,
         )
+        return self.save(profile)
+
+    def save(self, profile: UserProfile) -> UserProfile:
         self.client.upsert(
             "user_profiles",
             {

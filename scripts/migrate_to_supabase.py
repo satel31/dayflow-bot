@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import sys
 
@@ -10,6 +9,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from dayflow.config import load_settings
+from dayflow.crypto import encrypt_text
 from dayflow.digest_subscriber_store import DigestSubscriberStore
 from dayflow.group_store import EventGroupStore
 from dayflow.supabase_client import build_supabase_client
@@ -26,7 +26,13 @@ def main() -> None:
         user_id = int(token_path.stem)
         client.upsert(
             "google_tokens",
-            {"user_id": user_id, "token_json": json.loads(token_path.read_text(encoding="utf-8"))},
+            {
+                "user_id": user_id,
+                "token_json": encrypt_text(
+                    token_path.read_text(encoding="utf-8"),
+                    settings.data_encryption_key,
+                ),
+            },
             on_conflict="user_id",
         )
         token_count += 1

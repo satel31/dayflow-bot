@@ -91,6 +91,7 @@ uvicorn dayflow.web_app:app --host 0.0.0.0 --port 8000
 PERSISTENT_BACKEND=supabase
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+DATA_ENCRYPTION_KEY=your-fernet-key
 ```
 
 `SUPABASE_SERVICE_ROLE_KEY` дает полный доступ к данным и должен храниться только
@@ -110,6 +111,29 @@ venv\Scripts\python.exe scripts\migrate_to_supabase.py
 Профиль пользователя создаётся при включении рассылки и хранит Telegram chat ID,
 timezone и персональные часы утренней и вечерней рассылок. Пока команды изменения
 этих значений не добавлены, профиль получает глобальные значения из `.env`.
+
+Сгенерировать ключ шифрования:
+
+```powershell
+venv\Scripts\python.exe -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Google OAuth-токены и незавершённые диалоги шифруются этим ключом перед записью.
+Потеря ключа означает потерю доступа к зашифрованным данным.
+
+Для server-side Google OAuth создайте OAuth Client типа `Web application`, добавьте
+`${WEBHOOK_BASE_URL}/google/oauth/callback` в Authorized redirect URIs и задайте:
+
+```env
+GOOGLE_CREDENTIALS_JSON={"web":{...}}
+```
+
+Для cron-job.org настройте ежечасные POST-запросы:
+
+- `/cron/morning-digest`
+- `/cron/evening-digest`
+
+Оба запроса должны содержать заголовок `X-Cron-Secret` со значением `CRON_SECRET`.
 
 Для OpenRouter обычно достаточно указать:
 
@@ -230,7 +254,8 @@ DIGEST_EVENING_HOUR=22
 
 ## Группы событий
 
-Группы хранятся в локальном файле `data/event_groups.json`.
+В локальном режиме группы хранятся в `data/event_groups.json`. При
+`PERSISTENT_BACKEND=supabase` они хранятся в таблице `app_state`.
 
 Команды:
 
