@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from dayflow.config import Settings
+from dayflow.ydb_state_store import build_ydb_state_store
 
 
 COLOR_ALIASES = {
@@ -92,4 +93,17 @@ class EventGroupStore:
 
 
 def build_event_group_store(settings: Settings):
+    if settings.storage_backend == "ydb":
+        return YdbEventGroupStore(build_ydb_state_store(settings))
     return EventGroupStore(settings.event_groups_path)
+
+
+class YdbEventGroupStore(EventGroupStore):
+    def __init__(self, state) -> None:
+        self.state = state
+
+    def _read(self) -> dict[str, str]:
+        return self.state.get("app_state", "event_groups") or {}
+
+    def _write(self, data: dict[str, str]) -> None:
+        self.state.set("app_state", "event_groups", data)

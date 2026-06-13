@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from dayflow.config import Settings
+from dayflow.ydb_state_store import build_ydb_state_store
 
 
 @dataclass(frozen=True)
@@ -56,4 +57,34 @@ class UserProfileStore:
 
 
 def build_user_profile_store(settings: Settings) -> UserProfileStore:
+    if settings.storage_backend == "ydb":
+        return YdbUserProfileStore(build_ydb_state_store(settings))
     return UserProfileStore(settings.user_profiles_path)
+
+
+class YdbUserProfileStore:
+    def __init__(self, state) -> None:
+        self.state = state
+
+    def get(self, user_id: int) -> UserProfile | None:
+        payload = self.state.get("user_profiles", str(user_id))
+        return UserProfile(**payload) if payload else None
+
+    def list_profiles(self) -> list[UserProfile]:
+        return [UserProfile(**payload) for payload in self.state.list("user_profiles").values()]
+
+    def ensure(self, user_id: int, chat_id: int, settings: Settings) -> UserProfile:
+        current = self.get(user_id)
+        return self.save(
+            UserProfile(
+                user_id=int(user_id),
+                chat_id=int(chat_id),
+                timezone=current.timezone if current else settings.timezone,
+                digest_morning_hour=current.digest_morning_hour if current else settings.digest_morning_hour,
+                digest_evening_hour=current.digest_evening_hour if current else settings.digest_evening_hour,
+            )
+        )
+
+    def save(self, profile: UserProfile) -> UserProfile:
+        self.state.set("user_profiles", str(profile.user_id), asdict(profile))
+        return profile

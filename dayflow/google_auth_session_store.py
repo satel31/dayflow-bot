@@ -7,6 +7,7 @@ from pathlib import Path
 from dayflow.auth import GoogleAuthSession
 from dayflow.config import Settings
 from dayflow.crypto import decrypt_text, encrypt_text
+from dayflow.ydb_state_store import build_ydb_state_store
 
 
 class GoogleAuthSessionStore:
@@ -78,4 +79,58 @@ class GoogleAuthSessionStore:
 
 
 def build_google_auth_session_store(settings: Settings) -> GoogleAuthSessionStore:
+    if settings.storage_backend == "ydb":
+        return YdbGoogleAuthSessionStore(build_ydb_state_store(settings), settings.data_encryption_key)
     return GoogleAuthSessionStore(settings.google_auth_sessions_path, settings.data_encryption_key)
+
+
+class YdbGoogleAuthSessionStore:
+    def __init__(self, state, encryption_key: str = "") -> None:
+        self.state = state
+        self.encryption_key = encryption_key
+
+    def save(self, user_id: int, session: GoogleAuthSession) -> None:
+        self.state.set(
+            "google_auth_sessions",
+            str(user_id),
+            {
+                "state": session.state,
+                "redirect_uri": session.redirect_uri,
+                "code_verifier": encrypt_text(session.code_verifier, self.encryption_key),
+                "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
+            },
+        )
+
+    def get_for_user(self, user_id: int) -> GoogleAuthSession | None:
+        payload = self.state.get("google_auth_sessions", str(user_id))
+        return self._session(payload) if payload and self._valid(payload) else None
+
+    def get_by_state(self, state: str) -> tuple[int, GoogleAuthSession] | None:
+        for user_id, payload in self.state.list("google_auth_sessions").items():
+            if payload["state"] == state and self._valid(payload):
+                return int(user_id), self._session(payload)
+        return None
+
+    def delete(self, user_id: int) -> bool:
+        return self.state.delete("google_auth_sessions", str(user_id))
+
+    def cleanup_expired(self) -> int:
+        expired = [
+            user_id
+            for user_id, payload in self.state.list("google_auth_sessions").items()
+            if not self._valid(payload)
+        ]
+        for user_id in expired:
+            self.state.delete("google_auth_sessions", user_id)
+        return len(expired)
+
+    def _valid(self, payload: dict) -> bool:
+        return datetime.fromisoformat(payload["expires_at"]) > datetime.now(timezone.utc)
+
+    def _session(self, payload: dict) -> GoogleAuthSession:
+        return GoogleAuthSession(
+            auth_url="",
+            state=payload["state"],
+            redirect_uri=payload["redirect_uri"],
+            code_verifier=decrypt_text(payload["code_verifier"], self.encryption_key),
+        )

@@ -74,25 +74,52 @@ uvicorn dayflow.web_app:app --host 0.0.0.0 --port 8000
 Проверка доступности сервиса: `GET /health`. Локальный polling-режим через
 `python bot.py` пока сохранен для разработки.
 
-Для VM используйте Dockerfile из корня проекта:
+Для сервера используйте Dockerfile из корня проекта:
 
 - откройте HTTP-порт `8000`;
 - задайте health-check path `/health`;
 - добавьте секреты и остальные настройки из `.env.example` как environment variables;
-- подключите постоянный диск или bind mount к `/app/data`;
 - не загружайте локальные `.env`, `credentials.json` и `token.json` в образ.
 
 ## Постоянные данные
 
-Сейчас бот работает без внешней БД и хранит состояние в каталоге `data`:
+Локально бот хранит состояние в каталоге `data`. Для Yandex Serverless Container
+используйте бесплатную YDB Serverless:
+
+```env
+STORAGE_BACKEND=ydb
+YDB_ENDPOINT=grpcs://ydb.serverless.yandexcloud.net:2135
+YDB_DATABASE=/ru-central1/.../...
+```
+
+В Yandex Cloud аутентификация выполняется через сервисный аккаунт контейнера.
+Локально можно задать `YDB_SERVICE_ACCOUNT_KEY_JSON`.
+
+При первом подключении YDB бот автоматически создаёт таблицу `dayflow_state`.
+Сервисному аккаунту контейнера нужна роль `ydb.editor` на базе.
+
+Чтобы скопировать существующие локальные данные в YDB, заполните `YDB_ENDPOINT`,
+`YDB_DATABASE`, `YDB_SERVICE_ACCOUNT_KEY_JSON` и `DATA_ENCRYPTION_KEY`, затем выполните:
+
+```powershell
+venv\Scripts\python.exe scripts\migrate_to_ydb.py
+```
+
+После проверки установите на сервере:
+
+```env
+STORAGE_BACKEND=ydb
+```
+
+YDB хранит:
 
 - Google-токены пользователей;
 - подписчиков и пользовательские профили;
 - незавершённые OAuth-сессии;
 - группы событий и рабочее расписание;
-- отметки уже отправленных рассылок.
+- отметки уже отправленных рассылок;
+- группы событий и рабочее расписание.
 
-Для Docker обязательно подключите постоянный каталог хоста к `/app/data`.
 Незавершённые многошаговые диалоги пока хранятся только в памяти процесса.
 
 Сгенерировать ключ шифрования:

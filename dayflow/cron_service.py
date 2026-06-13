@@ -11,6 +11,7 @@ from dayflow.digest_service import DigestKind, build_daily_digest_for_user
 from dayflow.telegram_sender import send_telegram_message
 from dayflow.timezone_utils import get_timezone
 from dayflow.user_profile_store import UserProfile, build_user_profile_store
+from dayflow.ydb_state_store import build_ydb_state_store
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,20 @@ class FileDeliveryClaimStore:
         self.path.write_text(json.dumps(sorted(claims), indent=2), encoding="utf-8")
 
 
+class YdbDeliveryClaimStore:
+    def __init__(self, state) -> None:
+        self.state = state
+
+    def claim(self, key: str, user_id: int, kind: DigestKind, local_date: str) -> bool:
+        if self.state.get("digest_deliveries", key) is not None:
+            return False
+        self.state.set("digest_deliveries", key, {"user_id": user_id, "kind": kind, "local_date": local_date})
+        return True
+
+    def release(self, key: str) -> None:
+        self.state.delete("digest_deliveries", key)
+
+
 def send_due_digests(
     settings: Settings,
     kind: DigestKind,
@@ -63,7 +78,11 @@ def send_due_digests(
 ) -> CronDigestResult:
     now_utc = now or datetime.now(timezone.utc)
     profiles = (profile_store or build_user_profile_store(settings)).list_profiles()
-    claims = claim_store or FileDeliveryClaimStore(settings.digest_deliveries_path)
+    claims = claim_store or (
+        YdbDeliveryClaimStore(build_ydb_state_store(settings))
+        if settings.storage_backend == "ydb"
+        else FileDeliveryClaimStore(settings.digest_deliveries_path)
+    )
     due = sent = skipped = failed = 0
     for profile in profiles:
         local_now = now_utc.astimezone(get_timezone(profile.timezone))

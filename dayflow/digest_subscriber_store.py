@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dayflow.config import Settings
+from dayflow.ydb_state_store import build_ydb_state_store
 
 
 @dataclass(frozen=True)
@@ -67,4 +68,28 @@ class DigestSubscriberStore:
 
 
 def build_digest_subscriber_store(settings: Settings):
+    if settings.storage_backend == "ydb":
+        return YdbDigestSubscriberStore(build_ydb_state_store(settings))
     return DigestSubscriberStore(settings.digest_subscribers_path)
+
+
+class YdbDigestSubscriberStore:
+    def __init__(self, state) -> None:
+        self.state = state
+
+    def list_subscribers(self) -> list[DigestSubscriber]:
+        return [
+            DigestSubscriber(user_id=int(user_id), chat_id=int(chat_id))
+            for user_id, chat_id in self.state.list("digest_subscribers").items()
+        ]
+
+    def add(self, user_id: int, chat_id: int) -> DigestSubscriber:
+        self.state.set("digest_subscribers", str(user_id), int(chat_id))
+        return DigestSubscriber(user_id=int(user_id), chat_id=int(chat_id))
+
+    def remove(self, user_id: int) -> bool:
+        return self.state.delete("digest_subscribers", str(user_id))
+
+    def get(self, user_id: int) -> DigestSubscriber | None:
+        chat_id = self.state.get("digest_subscribers", str(user_id))
+        return DigestSubscriber(user_id=int(user_id), chat_id=int(chat_id)) if chat_id is not None else None

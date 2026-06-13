@@ -11,6 +11,7 @@ from google_auth_oauthlib.flow import Flow
 
 from dayflow.config import Settings
 from dayflow.crypto import decrypt_text, encrypt_text
+from dayflow.ydb_state_store import build_ydb_state_store
 
 
 GOOGLE_SCOPES = [
@@ -109,6 +110,8 @@ def complete_google_auth(
 
 
 def disconnect_google_account(settings: Settings, user_id: int) -> bool:
+    if settings.storage_backend == "ydb":
+        return build_ydb_state_store(settings).delete("google_tokens", str(user_id))
     token_path = token_path_for_user(settings, user_id)
     if not token_path.exists():
         return False
@@ -117,6 +120,8 @@ def disconnect_google_account(settings: Settings, user_id: int) -> bool:
 
 
 def google_token_exists(settings: Settings, user_id: int) -> bool:
+    if settings.storage_backend == "ydb":
+        return build_ydb_state_store(settings).get("google_tokens", str(user_id)) is not None
     return token_path_for_user(settings, user_id).exists()
 
 
@@ -127,6 +132,9 @@ def _resolve_token_path(settings: Settings, user_id: int | None) -> Path:
 
 
 def _read_token_json(settings: Settings, user_id: int | None) -> str | None:
+    if settings.storage_backend == "ydb" and user_id is not None:
+        value = build_ydb_state_store(settings).get("google_tokens", str(user_id))
+        return decrypt_text(str(value), settings.data_encryption_key) if value else None
     token_path = _resolve_token_path(settings, user_id)
     if not token_path.exists():
         return None
@@ -134,6 +142,15 @@ def _read_token_json(settings: Settings, user_id: int | None) -> str | None:
 
 
 def _write_token_json(settings: Settings, user_id: int | None, token_json: str) -> None:
+    if settings.storage_backend == "ydb":
+        if user_id is None:
+            raise ValueError("YDB token storage requires a Telegram user_id.")
+        build_ydb_state_store(settings).set(
+            "google_tokens",
+            str(user_id),
+            encrypt_text(token_json, settings.data_encryption_key),
+        )
+        return
     token_path = _resolve_token_path(settings, user_id)
     token_path.parent.mkdir(parents=True, exist_ok=True)
     token_path.write_text(encrypt_text(token_json, settings.data_encryption_key), encoding="utf-8")

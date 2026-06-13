@@ -13,6 +13,7 @@ from telegram.ext import Application
 import bot
 from dayflow.config import Settings, load_settings
 from dayflow.cron_service import send_due_digests
+from dayflow.ydb_state_store import build_ydb_state_store
 
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,13 @@ def create_web_app(
 
     @app.get("/health")
     async def health() -> dict[str, str]:
-        return {"status": "ok", "storage": "file"}
+        if web_settings.storage_backend == "ydb":
+            try:
+                await asyncio.to_thread(build_ydb_state_store(web_settings).ping)
+            except Exception as exc:
+                logger.exception("YDB health check failed")
+                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="YDB unavailable") from exc
+        return {"status": "ok", "storage": web_settings.storage_backend}
 
     @app.post(TELEGRAM_WEBHOOK_PATH)
     async def telegram_webhook(

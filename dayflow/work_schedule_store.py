@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dayflow.config import Settings
+from dayflow.ydb_state_store import build_ydb_state_store
 
 
 WEEKDAY_LABELS = {
@@ -86,11 +87,48 @@ class WorkScheduleStore:
 
 
 def build_work_schedule_store(settings: Settings):
+    if settings.storage_backend == "ydb":
+        return YdbWorkScheduleStore(
+            build_ydb_state_store(settings),
+            settings.workday_start_hour,
+            settings.workday_end_hour,
+        )
     return WorkScheduleStore(
         settings.work_schedule_path,
         settings.workday_start_hour,
         settings.workday_end_hour,
     )
+
+
+class YdbWorkScheduleStore(WorkScheduleStore):
+    def __init__(self, state, default_start_hour: int, default_end_hour: int) -> None:
+        self.state = state
+        self.default = WorkSchedule((0, 1, 2, 3, 4), default_start_hour * 60, default_end_hour * 60)
+
+    def load(self) -> WorkSchedule:
+        payload = self.state.get("app_state", "work_schedule")
+        if not payload:
+            return self.default
+        return self._validate(
+            WorkSchedule(
+                tuple(payload["weekdays"]),
+                int(payload["start_minutes"]),
+                int(payload["end_minutes"]),
+            )
+        )
+
+    def save(self, schedule: WorkSchedule) -> WorkSchedule:
+        schedule = self._validate(schedule)
+        self.state.set(
+            "app_state",
+            "work_schedule",
+            {
+                "weekdays": list(schedule.weekdays),
+                "start_minutes": schedule.start_minutes,
+                "end_minutes": schedule.end_minutes,
+            },
+        )
+        return schedule
 
 
 def format_minutes(total_minutes: int) -> str:

@@ -48,6 +48,10 @@ class Settings:
     user_profiles_path: str = "data/user_profiles.json"
     google_auth_sessions_path: str = "data/google_auth_sessions.json"
     digest_deliveries_path: str = "data/digest_deliveries.json"
+    storage_backend: str = "file"
+    ydb_endpoint: str = ""
+    ydb_database: str = ""
+    ydb_service_account_key_json: str = ""
 
 
 def load_settings() -> Settings:
@@ -102,4 +106,8 @@ def load_settings() -> Settings:
         digest_deliveries_path=os.getenv(
             "DIGEST_DELIVERIES_PATH", "data/digest_deliveries.json"
         ).strip(),
+        storage_backend=os.getenv("STORAGE_BACKEND", "file").strip().casefold(),
+        ydb_endpoint=os.getenv("YDB_ENDPOINT", "").strip(),
+        ydb_database=os.getenv("YDB_DATABASE", "").strip(),
+        ydb_service_account_key_json=os.getenv("YDB_SERVICE_ACCOUNT_KEY_JSON", "").strip(),
     )
