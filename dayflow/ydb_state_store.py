@@ -34,7 +34,10 @@ class YdbStateStore:
             SELECT value FROM `{TABLE_NAME}`
             WHERE namespace = $namespace AND key = $key;
             """,
-            {"$namespace": namespace, "$key": key},
+            {
+                "$namespace": namespace,
+                "$key": key,
+            },
         )
         return json.loads(rows[0]["value"]) if rows else None
 
@@ -57,7 +60,11 @@ class YdbStateStore:
             UPSERT INTO `{TABLE_NAME}` (namespace, key, value)
             VALUES ($namespace, $key, $value);
             """,
-            {"$namespace": namespace, "$key": key, "$value": json.dumps(value, ensure_ascii=True)},
+            {
+                "$namespace": namespace,
+                "$key": key,
+                "$value": json.dumps(value, ensure_ascii=True),
+            },
         )
 
     def delete(self, namespace: str, key: str) -> bool:
@@ -68,7 +75,10 @@ class YdbStateStore:
             DECLARE $key AS Utf8;
             DELETE FROM `{TABLE_NAME}` WHERE namespace = $namespace AND key = $key;
             """,
-            {"$namespace": namespace, "$key": key},
+            {
+                "$namespace": namespace,
+                "$key": key,
+            },
         )
         return existed
 
@@ -92,7 +102,12 @@ class YdbStateStore:
 
     def _execute(self, query: str, params: dict) -> list:
         def operation(session):
-            result_sets = session.transaction().execute(query, params, commit_tx=True)
+            prepared_query = session.prepare(query)
+            result_sets = session.transaction().execute(
+                prepared_query,
+                parameters=params,
+                commit_tx=True,
+            )
             return list(result_sets[0].rows) if result_sets else []
 
         return self.pool.retry_operation_sync(operation)

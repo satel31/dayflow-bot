@@ -8,6 +8,7 @@ from dayflow.google_auth_session_store import YdbGoogleAuthSessionStore
 from dayflow.group_store import YdbEventGroupStore
 from dayflow.user_profile_store import UserProfile, YdbUserProfileStore
 from dayflow.work_schedule_store import WorkSchedule, YdbWorkScheduleStore
+from dayflow.ydb_state_store import YdbStateStore
 
 
 class FakeYdbState:
@@ -61,3 +62,21 @@ def test_ydb_oauth_session_survives_store_instance_and_encrypts_verifier() -> No
     assert restored is not None
     assert restored[1].code_verifier == "secret-verifier"
     assert "secret-verifier" not in str(state.data)
+
+
+def test_ydb_state_store_passes_yql_parameters() -> None:
+    store = YdbStateStore.__new__(YdbStateStore)
+    captured = {}
+
+    def execute(query, params):
+        captured.update(params)
+        return []
+
+    store._execute = execute
+
+    store.set("namespace", "key", {"value": 1})
+
+    assert set(captured) == {"$namespace", "$key", "$value"}
+    assert captured["$namespace"] == "namespace"
+    assert captured["$key"] == "key"
+    assert captured["$value"] == '{"value": 1}'
