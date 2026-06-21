@@ -111,6 +111,18 @@ venv\Scripts\python.exe scripts\migrate_to_ydb.py
 STORAGE_BACKEND=ydb
 ```
 
+## Сборка образа без локального Docker
+
+Workflow `.github/workflows/publish-yandex-image.yml` собирает образ в GitHub Actions
+и публикует его как:
+
+```text
+cr.yandex/crpro3lqut748tpcatjc/dayflow:latest
+```
+
+В GitHub Actions secret `YC_SA_JSON_CREDENTIALS` нужно сохранить полный JSON
+авторизованного ключа сервисного аккаунта с ролью `container-registry.images.pusher`.
+
 YDB хранит:
 
 - Google-токены пользователей;
