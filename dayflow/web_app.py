@@ -42,6 +42,7 @@ def create_web_app(
                 url=webhook_url,
                 secret_token=web_settings.telegram_webhook_secret,
                 allowed_updates=Update.ALL_TYPES,
+                max_connections=1,
             )
             logger.info("Telegram webhook configured: %s", webhook_url)
         else:
