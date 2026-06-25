@@ -53,7 +53,7 @@ def create_web_app(
             raise RuntimeError("TELEGRAM_WEBHOOK_SECRET must be configured in webhook mode.")
 
         await initialize_webhook_application(application, web_settings)
-        if web_settings.webhook_base_url:
+        if web_settings.webhook_base_url and web_settings.register_telegram_webhook:
             webhook_url = f"{web_settings.webhook_base_url}{TELEGRAM_WEBHOOK_PATH}"
             try:
                 await application.bot.set_webhook(
@@ -66,7 +66,7 @@ def create_web_app(
             except Exception:
                 logger.exception("Failed to configure Telegram webhook; keeping the existing webhook.")
         else:
-            logger.warning("WEBHOOK_BASE_URL is empty; Telegram webhook was not configured.")
+            logger.info("Telegram webhook registration skipped on startup.")
         try:
             bot.google_auth_session_store.cleanup_expired()
         except Exception:

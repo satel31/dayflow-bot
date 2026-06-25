@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+from telegram import Update
 
 import bot
 from dayflow.auth import GoogleAuthSession
@@ -12,21 +13,41 @@ import dayflow.web_app as web_app_module
 from dayflow.web_app import create_web_app
 
 
+class FakeRequest:
+    async def initialize(self) -> None:
+        pass
+
+
+class FakeUpdateProcessor:
+    async def initialize(self) -> None:
+        pass
+
+
 class FakeBot:
     def __init__(self) -> None:
+        self.token = "123456:test-token"
+        self._request = [FakeRequest(), FakeRequest()]
         self.sent_messages = []
+        self.webhooks = []
 
     async def send_message(self, chat_id, text) -> None:
         self.sent_messages.append((chat_id, text))
+
+    async def set_webhook(self, **kwargs) -> None:
+        self.webhooks.append(kwargs)
 
 
 class FakeTelegramApplication:
     def __init__(self) -> None:
         self.bot = FakeBot()
+        self.update_processor = FakeUpdateProcessor()
         self.processed_updates = []
 
     async def process_update(self, update) -> None:
         self.processed_updates.append(update)
+
+    async def shutdown(self) -> None:
+        pass
 
 
 def make_settings(**overrides) -> Settings:
@@ -89,6 +110,42 @@ def test_webhook_processes_telegram_update() -> None:
     assert response.json() == {"ok": True}
     assert len(telegram_application.processed_updates) == 1
     assert telegram_application.processed_updates[0].update_id == 123
+
+
+def test_startup_skips_webhook_registration_by_default() -> None:
+    telegram_application = FakeTelegramApplication()
+    app = create_web_app(
+        settings=make_settings(webhook_base_url="https://bot.test"),
+        telegram_application=telegram_application,
+    )
+
+    with TestClient(app):
+        pass
+
+    assert telegram_application.bot.webhooks == []
+
+
+def test_startup_registers_webhook_when_enabled() -> None:
+    telegram_application = FakeTelegramApplication()
+    app = create_web_app(
+        settings=make_settings(
+            webhook_base_url="https://bot.test",
+            register_telegram_webhook=True,
+        ),
+        telegram_application=telegram_application,
+    )
+
+    with TestClient(app):
+        pass
+
+    assert telegram_application.bot.webhooks == [
+        {
+            "url": "https://bot.test/telegram/webhook",
+            "secret_token": "webhook-secret",
+            "allowed_updates": Update.ALL_TYPES,
+            "max_connections": 1,
+        }
+    ]
 
 
 def test_google_oauth_callback_completes_auth_and_notifies_user(monkeypatch) -> None:
