@@ -123,8 +123,11 @@ def create_web_app(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid cron secret.")
 
     @app.post("/telegram/process-queue")
-    async def process_telegram_queue(x_cron_secret: str | None = Header(default=None)) -> dict:
-        await verify_cron_secret(x_cron_secret)
+    async def process_telegram_queue(
+        secret: str | None = None,
+        x_cron_secret: str | None = Header(default=None),
+    ) -> dict:
+        await verify_cron_secret(x_cron_secret or secret)
         queue = app.state.telegram_update_queue
         if queue is None:
             return {"processed": 0, "failed": 0, "queued": False}
