@@ -44,6 +44,7 @@ def make_settings(**overrides) -> Settings:
         "gemini_model": "gemini-2.5-flash",
         "outbound_proxy_url": "",
         "telegram_proxy_url": "",
+        "telegram_bot_username": "task_fox_bot",
         "gemini_proxy_url": "",
         "workday_start_hour": 9,
         "workday_end_hour": 18,

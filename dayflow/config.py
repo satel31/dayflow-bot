@@ -29,6 +29,7 @@ class Settings:
     workday_start_hour: int
     workday_end_hour: int
     gemini_debug_logging: bool
+    telegram_bot_username: str = ""
     openrouter_api_key: str = ""
     openrouter_model: str = "openai/gpt-4o-mini"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
@@ -77,6 +78,7 @@ def load_settings() -> Settings:
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip(),
         outbound_proxy_url=outbound_proxy_url,
         telegram_proxy_url=os.getenv("TELEGRAM_PROXY_URL", outbound_proxy_url).strip(),
+        telegram_bot_username=os.getenv("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@"),
         gemini_proxy_url=os.getenv("GEMINI_PROXY_URL", outbound_proxy_url).strip(),
         workday_start_hour=int(os.getenv("WORKDAY_START_HOUR", "9")),
         workday_end_hour=int(os.getenv("WORKDAY_END_HOUR", "18")),

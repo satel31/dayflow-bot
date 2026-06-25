@@ -21,10 +21,15 @@ TELEGRAM_WEBHOOK_PATH = "/telegram/webhook"
 GOOGLE_OAUTH_CALLBACK_PATH = "/google/oauth/callback"
 
 
-async def initialize_webhook_application(application: Application) -> None:
+async def initialize_webhook_application(application: Application, settings: Settings) -> None:
     """Initialize enough of PTB to process webhook updates without blocking on getMe."""
     bot_id = int(application.bot.token.split(":", 1)[0])
-    application.bot._bot_user = User(id=bot_id, first_name="DayFlow", is_bot=True)
+    application.bot._bot_user = User(
+        id=bot_id,
+        first_name=settings.telegram_bot_username or "DayFlow",
+        is_bot=True,
+        username=settings.telegram_bot_username or None,
+    )
     await asyncio.gather(
         application.bot._request[0].initialize(),
         application.bot._request[1].initialize(),
@@ -47,7 +52,7 @@ def create_web_app(
         if not web_settings.telegram_webhook_secret:
             raise RuntimeError("TELEGRAM_WEBHOOK_SECRET must be configured in webhook mode.")
 
-        await initialize_webhook_application(application)
+        await initialize_webhook_application(application, web_settings)
         if web_settings.webhook_base_url:
             webhook_url = f"{web_settings.webhook_base_url}{TELEGRAM_WEBHOOK_PATH}"
             try:
