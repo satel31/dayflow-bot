@@ -43,6 +43,7 @@ class Settings:
     celery_beat_schedule_path: str = "data/celerybeat-schedule"
     webhook_base_url: str = ""
     register_telegram_webhook: bool = False
+    telegram_update_process_limit: int = 10
     telegram_webhook_secret: str = ""
     google_credentials_json: str = ""
     cron_secret: str = ""
@@ -100,6 +101,7 @@ def load_settings() -> Settings:
         webhook_base_url=os.getenv("WEBHOOK_BASE_URL", "").strip().rstrip("/"),
         register_telegram_webhook=os.getenv("REGISTER_TELEGRAM_WEBHOOK", "").strip().casefold()
         in {"1", "true", "yes", "on"},
+        telegram_update_process_limit=int(os.getenv("TELEGRAM_UPDATE_PROCESS_LIMIT", "10")),
         telegram_webhook_secret=os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip(),
         google_credentials_json=os.getenv("GOOGLE_CREDENTIALS_JSON", "").strip(),
         cron_secret=os.getenv("CRON_SECRET", "").strip(),

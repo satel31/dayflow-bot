@@ -13,6 +13,8 @@ from telegram.ext import Application
 import bot
 from dayflow.config import Settings, load_settings
 from dayflow.cron_service import send_due_digests
+from dayflow.telegram_sender import send_with_retry
+from dayflow.telegram_update_queue import TelegramUpdateQueue
 from dayflow.ydb_state_store import build_ydb_state_store
 
 
@@ -79,6 +81,11 @@ def create_web_app(
     app = FastAPI(title="DayFlow Bot", lifespan=lifespan)
     app.state.telegram_application = application
     app.state.settings = web_settings
+    app.state.telegram_update_queue = (
+        TelegramUpdateQueue(build_ydb_state_store(web_settings))
+        if web_settings.storage_backend == "ydb"
+        else None
+    )
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -102,9 +109,41 @@ def create_web_app(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid webhook secret.")
 
         payload = await request.json()
+        if app.state.telegram_update_queue is not None:
+            key = await asyncio.to_thread(app.state.telegram_update_queue.enqueue, payload)
+            logger.info("Telegram update queued: %s", key)
+            return {"ok": True}
+
         update = Update.de_json(payload, application.bot)
         await application.process_update(update)
         return {"ok": True}
+
+    async def verify_cron_secret(secret: str | None) -> None:
+        if not web_settings.cron_secret or not secrets.compare_digest(secret or "", web_settings.cron_secret):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid cron secret.")
+
+    @app.post("/telegram/process-queue")
+    async def process_telegram_queue(x_cron_secret: str | None = Header(default=None)) -> dict:
+        await verify_cron_secret(x_cron_secret)
+        queue = app.state.telegram_update_queue
+        if queue is None:
+            return {"processed": 0, "failed": 0, "queued": False}
+
+        entries = await asyncio.to_thread(queue.list_pending, web_settings.telegram_update_process_limit)
+        processed = 0
+        failed = 0
+        for entry in entries:
+            try:
+                update = Update.de_json(entry.payload, application.bot)
+                await application.process_update(update)
+                await asyncio.to_thread(queue.delete, entry.key)
+                processed += 1
+            except Exception as exc:
+                logger.exception("Failed to process queued Telegram update %s", entry.key)
+                await asyncio.to_thread(queue.record_failure, entry, repr(exc))
+                failed += 1
+
+        return {"processed": processed, "failed": failed, "queued": True}
 
     @app.get(GOOGLE_OAUTH_CALLBACK_PATH, response_class=HTMLResponse)
     async def google_oauth_callback(request: Request, state: str = "") -> str:
@@ -124,7 +163,8 @@ def create_web_app(
             bot.pending_google_auth.pop(user_id, None)
             bot.reset_user_google_services(user_id)
             profile = bot.user_profile_store.get(user_id)
-            await application.bot.send_message(
+            await send_with_retry(
+                application.bot.send_message,
                 chat_id=profile.chat_id if profile else user_id,
                 text="Google-аккаунт подключен. Можно вернуться в Telegram.",
             )
@@ -134,8 +174,7 @@ def create_web_app(
         return "<html><body><h1>Google подключен</h1><p>Можно закрыть эту страницу и вернуться в Telegram.</p></body></html>"
 
     async def run_digest(kind: str, secret: str | None) -> dict:
-        if not web_settings.cron_secret or not secrets.compare_digest(secret or "", web_settings.cron_secret):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid cron secret.")
+        await verify_cron_secret(secret)
         result = await asyncio.to_thread(send_due_digests, web_settings, kind)
         logger.info("Cron digest kind=%s result=%s", kind, result)
         return {

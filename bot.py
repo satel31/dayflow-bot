@@ -34,6 +34,7 @@ from dayflow.digest_subscriber_store import build_digest_subscriber_store
 from dayflow.group_store import build_event_group_store
 from dayflow.google_auth_session_store import build_google_auth_session_store
 from dayflow.tasks_service import GoogleTasksService, TaskItem
+from dayflow.telegram_sender import send_with_retry
 from dayflow.timezone_utils import get_timezone
 from dayflow.user_profile_store import build_user_profile_store
 from dayflow.work_schedule_store import (
@@ -175,7 +176,7 @@ user_tasks_services: dict[int, GoogleTasksService] = {}
 
 async def safe_reply_text(message, text: str, reply_markup=None) -> None:
     try:
-        await message.reply_text(text, reply_markup=reply_markup)
+        await send_with_retry(message.reply_text, text=text, reply_markup=reply_markup)
     except TimedOut:
         logger.exception("Failed to send Telegram reply due to timeout")
     except TelegramError:

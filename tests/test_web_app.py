@@ -23,6 +23,27 @@ class FakeUpdateProcessor:
         pass
 
 
+class FakeYdbState:
+    def __init__(self) -> None:
+        self.data = {}
+
+    def get(self, namespace, key):
+        return self.data.get((namespace, key))
+
+    def list(self, namespace):
+        return {
+            key: value
+            for (stored_namespace, key), value in self.data.items()
+            if stored_namespace == namespace
+        }
+
+    def set(self, namespace, key, value):
+        self.data[(namespace, key)] = value
+
+    def delete(self, namespace, key):
+        return self.data.pop((namespace, key), None) is not None
+
+
 class FakeBot:
     def __init__(self) -> None:
         self.token = "123456:test-token"
@@ -110,6 +131,42 @@ def test_webhook_processes_telegram_update() -> None:
     assert response.json() == {"ok": True}
     assert len(telegram_application.processed_updates) == 1
     assert telegram_application.processed_updates[0].update_id == 123
+
+
+def test_webhook_queues_ydb_update_and_processes_queue(monkeypatch) -> None:
+    state = FakeYdbState()
+    telegram_application = FakeTelegramApplication()
+    monkeypatch.setattr(web_app_module, "build_ydb_state_store", lambda settings: state)
+    app = create_web_app(
+        settings=make_settings(
+            storage_backend="ydb",
+            cron_secret="cron-secret",
+            telegram_update_process_limit=10,
+        ),
+        telegram_application=telegram_application,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/telegram/webhook",
+        json={"update_id": 123},
+        headers={"X-Telegram-Bot-Api-Secret-Token": "webhook-secret"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert telegram_application.processed_updates == []
+    assert ("telegram_update_queue", "123") in state.data
+
+    process_response = client.post(
+        "/telegram/process-queue",
+        headers={"X-Cron-Secret": "cron-secret"},
+    )
+
+    assert process_response.status_code == 200
+    assert process_response.json() == {"processed": 1, "failed": 0, "queued": True}
+    assert len(telegram_application.processed_updates) == 1
+    assert ("telegram_update_queue", "123") not in state.data
 
 
 def test_startup_skips_webhook_registration_by_default() -> None:
