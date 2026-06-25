@@ -7,7 +7,7 @@ import secrets
 
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
-from telegram import Update
+from telegram import Update, User
 from telegram.ext import Application
 
 import bot
@@ -19,6 +19,19 @@ from dayflow.ydb_state_store import build_ydb_state_store
 logger = logging.getLogger(__name__)
 TELEGRAM_WEBHOOK_PATH = "/telegram/webhook"
 GOOGLE_OAUTH_CALLBACK_PATH = "/google/oauth/callback"
+
+
+async def initialize_webhook_application(application: Application) -> None:
+    """Initialize enough of PTB to process webhook updates without blocking on getMe."""
+    bot_id = int(application.bot.token.split(":", 1)[0])
+    application.bot._bot_user = User(id=bot_id, first_name="DayFlow", is_bot=True)
+    await asyncio.gather(
+        application.bot._request[0].initialize(),
+        application.bot._request[1].initialize(),
+    )
+    application.bot._initialized = True
+    await application.update_processor.initialize()
+    application._initialized = True
 
 
 def create_web_app(
@@ -34,17 +47,19 @@ def create_web_app(
         if not web_settings.telegram_webhook_secret:
             raise RuntimeError("TELEGRAM_WEBHOOK_SECRET must be configured in webhook mode.")
 
-        await application.initialize()
-        await application.start()
+        await initialize_webhook_application(application)
         if web_settings.webhook_base_url:
             webhook_url = f"{web_settings.webhook_base_url}{TELEGRAM_WEBHOOK_PATH}"
-            await application.bot.set_webhook(
-                url=webhook_url,
-                secret_token=web_settings.telegram_webhook_secret,
-                allowed_updates=Update.ALL_TYPES,
-                max_connections=1,
-            )
-            logger.info("Telegram webhook configured: %s", webhook_url)
+            try:
+                await application.bot.set_webhook(
+                    url=webhook_url,
+                    secret_token=web_settings.telegram_webhook_secret,
+                    allowed_updates=Update.ALL_TYPES,
+                    max_connections=1,
+                )
+                logger.info("Telegram webhook configured: %s", webhook_url)
+            except Exception:
+                logger.exception("Failed to configure Telegram webhook; keeping the existing webhook.")
         else:
             logger.warning("WEBHOOK_BASE_URL is empty; Telegram webhook was not configured.")
         try:
@@ -54,7 +69,6 @@ def create_web_app(
 
         yield
 
-        await application.stop()
         await application.shutdown()
 
     app = FastAPI(title="DayFlow Bot", lifespan=lifespan)
