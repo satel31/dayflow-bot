@@ -4,6 +4,7 @@ venv/
 __pycache__/
 .idea/
 credentials.json
+web-credentials*.json
 token.json
 
 CALENDAR_MVP_NOTES.txt

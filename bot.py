@@ -2348,18 +2348,24 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 def build_application() -> Application:
     builder = Application.builder().token(require_token())
+    request_kwargs = {
+        "connection_pool_size": 8,
+        "read_timeout": 30.0,
+        "write_timeout": 30.0,
+        "connect_timeout": 30.0,
+        "pool_timeout": 30.0,
+    }
     if settings.telegram_proxy_url:
-        builder = builder.request(HTTPXRequest(proxy=settings.telegram_proxy_url))
+        builder = builder.request(HTTPXRequest(proxy=settings.telegram_proxy_url, **request_kwargs))
         builder = builder.get_updates_request(
             HTTPXRequest(
                 proxy=settings.telegram_proxy_url,
-                connection_pool_size=1,
-                read_timeout=30.0,
-                write_timeout=30.0,
-                connect_timeout=30.0,
-                pool_timeout=30.0,
+                **request_kwargs,
             )
         )
+    else:
+        builder = builder.request(HTTPXRequest(**request_kwargs))
+        builder = builder.get_updates_request(HTTPXRequest(**request_kwargs))
     application = builder.build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
