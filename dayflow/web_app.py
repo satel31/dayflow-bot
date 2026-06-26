@@ -122,11 +122,7 @@ def create_web_app(
         if not web_settings.cron_secret or not secrets.compare_digest(secret or "", web_settings.cron_secret):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid cron secret.")
 
-    @app.post("/telegram/process-queue")
-    async def process_telegram_queue(
-        secret: str | None = None,
-        x_cron_secret: str | None = Header(default=None),
-    ) -> dict:
+    async def process_telegram_queue_request(secret: str | None, x_cron_secret: str | None) -> dict:
         await verify_cron_secret(x_cron_secret or secret)
         queue = app.state.telegram_update_queue
         if queue is None:
@@ -147,6 +143,20 @@ def create_web_app(
                 failed += 1
 
         return {"processed": processed, "failed": failed, "queued": True}
+
+    @app.post("/telegram/process-queue")
+    async def process_telegram_queue(
+        secret: str | None = None,
+        x_cron_secret: str | None = Header(default=None),
+    ) -> dict:
+        return await process_telegram_queue_request(secret, x_cron_secret)
+
+    @app.post("/")
+    async def process_telegram_queue_root(
+        secret: str | None = None,
+        x_cron_secret: str | None = Header(default=None),
+    ) -> dict:
+        return await process_telegram_queue_request(secret, x_cron_secret)
 
     @app.get(GOOGLE_OAUTH_CALLBACK_PATH, response_class=HTMLResponse)
     async def google_oauth_callback(request: Request, state: str = "") -> str:
