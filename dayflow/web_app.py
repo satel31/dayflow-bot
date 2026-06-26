@@ -156,7 +156,7 @@ def create_web_app(
         secret: str | None = None,
         x_cron_secret: str | None = Header(default=None),
     ) -> dict:
-        return await process_telegram_queue_request(secret, x_cron_secret)
+        return await process_telegram_queue_request(secret, x_cron_secret or web_settings.cron_secret)
 
     @app.get(GOOGLE_OAUTH_CALLBACK_PATH, response_class=HTMLResponse)
     async def google_oauth_callback(request: Request, state: str = "") -> str:

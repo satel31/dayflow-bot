@@ -158,7 +158,7 @@ def test_webhook_queues_ydb_update_and_processes_queue(monkeypatch) -> None:
     assert telegram_application.processed_updates == []
     assert ("telegram_update_queue", "123") in state.data
 
-    process_response = client.post("/?secret=cron-secret")
+    process_response = client.post("/")
 
     assert process_response.status_code == 200
     assert process_response.json() == {"processed": 1, "failed": 0, "queued": True}
