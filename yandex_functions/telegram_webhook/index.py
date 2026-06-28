@@ -64,14 +64,15 @@ def _enqueue(payload: dict[str, Any]) -> str:
         "created_at": int(time()),
         "last_error": "",
     }
+    query = (
+        "DECLARE $namespace AS Utf8; "
+        "DECLARE $key AS Utf8; "
+        "DECLARE $value AS Utf8; "
+        f"UPSERT INTO `{TABLE_NAME}` (namespace, key, value) "
+        "VALUES ($namespace, $key, $value);"
+    )
     _execute(
-        f"""
-        DECLARE $namespace AS Utf8;
-        DECLARE $key AS Utf8;
-        DECLARE $value AS Utf8;
-        UPSERT INTO `{TABLE_NAME}` (namespace, key, value)
-        VALUES ($namespace, $key, $value);
-        """,
+        query,
         {
             "$namespace": QUEUE_NAMESPACE,
             "$key": key,
