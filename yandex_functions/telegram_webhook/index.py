@@ -15,13 +15,14 @@ QUEUE_NAMESPACE = "telegram_update_queue"
 
 _driver = None
 _pool = None
-_table_ready = False
 
 
 def handler(event, context):
+    print("telegram_webhook: handler started", flush=True)
     try:
         return _handle(event)
     except Exception as exc:
+        print(f"telegram_webhook: failed: {type(exc).__name__}: {exc}", flush=True)
         return _response(
             500,
             {
@@ -46,8 +47,11 @@ def _handle(event: dict[str, Any]):
     if not secrets.compare_digest(actual_secret, expected_secret):
         return _response(403, {"ok": False, "error": "Invalid webhook secret"})
 
+    print("telegram_webhook: secret accepted", flush=True)
     payload = json.loads(_body(event))
+    print(f"telegram_webhook: enqueue started update_id={payload.get('update_id')}", flush=True)
     key = _enqueue(payload)
+    print(f"telegram_webhook: enqueue completed key={key}", flush=True)
     return _response(200, {"ok": True, "queued": key})
 
 
@@ -89,43 +93,30 @@ def _execute(query: str, params: dict[str, Any]) -> list:
         )
         return list(result_sets[0].rows) if result_sets else []
 
-    return pool.retry_operation_sync(operation)
+    print("telegram_webhook: YDB execute started", flush=True)
+    result = pool.retry_operation_sync(operation)
+    print("telegram_webhook: YDB execute completed", flush=True)
+    return result
 
 
 def _pool_instance():
-    global _driver, _pool, _table_ready
+    global _driver, _pool
     if _pool is None:
         endpoint = os.environ.get("YDB_ENDPOINT", "")
         database = os.environ.get("YDB_DATABASE", "")
         if not endpoint or not database:
             raise RuntimeError("YDB_ENDPOINT and YDB_DATABASE must be configured")
+        print("telegram_webhook: YDB driver creating", flush=True)
         _driver = ydb.Driver(
             endpoint=endpoint,
             database=database,
             credentials=ydb.iam.MetadataUrlCredentials(),
         )
-        _driver.wait(timeout=10)
+        print("telegram_webhook: YDB driver waiting", flush=True)
+        _driver.wait(timeout=3, fail_fast=True)
+        print("telegram_webhook: YDB driver ready", flush=True)
         _pool = ydb.SessionPool(_driver)
-    if not _table_ready:
-        _ensure_table()
-        _table_ready = True
     return _pool
-
-
-def _ensure_table() -> None:
-    def operation(session):
-        session.execute_scheme(
-            f"""
-            CREATE TABLE IF NOT EXISTS `{TABLE_NAME}` (
-                namespace Utf8 NOT NULL,
-                key Utf8 NOT NULL,
-                value Utf8 NOT NULL,
-                PRIMARY KEY (namespace, key)
-            );
-            """
-        )
-
-    _pool.retry_operation_sync(operation)
 
 
 def _body(event: dict[str, Any]) -> str:
