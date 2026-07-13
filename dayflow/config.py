@@ -34,6 +34,10 @@ class Settings:
     openrouter_model: str = "openai/gpt-4o-mini"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_proxy_url: str = ""
+    yandexgpt_api_key: str = ""
+    yandexgpt_model: str = ""
+    yandexgpt_folder_id: str = ""
+    yandexgpt_base_url: str = "https://llm.api.cloud.yandex.net/v1"
     digest_subscribers_path: str = "data/digest_subscribers.json"
     digest_morning_hour: int = 10
     digest_evening_hour: int = 22
@@ -90,6 +94,10 @@ def load_settings() -> Settings:
         openrouter_model=os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini").strip(),
         openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip(),
         openrouter_proxy_url=os.getenv("OPENROUTER_PROXY_URL", outbound_proxy_url).strip(),
+        yandexgpt_api_key=os.getenv("YANDEXGPT_API_KEY", "").strip(),
+        yandexgpt_model=os.getenv("YANDEXGPT_MODEL", "").strip(),
+        yandexgpt_folder_id=os.getenv("YANDEXGPT_FOLDER_ID", "").strip(),
+        yandexgpt_base_url=os.getenv("YANDEXGPT_BASE_URL", "https://llm.api.cloud.yandex.net/v1").strip(),
         digest_morning_hour=int(os.getenv("DIGEST_MORNING_HOUR", "10")),
         digest_evening_hour=int(os.getenv("DIGEST_EVENING_HOUR", "22")),
         celery_broker_url=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0").strip(),

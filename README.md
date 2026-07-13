@@ -157,14 +157,25 @@ GOOGLE_CREDENTIALS_JSON={"web":{...}}
 
 Оба запроса должны содержать заголовок `X-Cron-Secret` со значением `CRON_SECRET`.
 
-Для OpenRouter обычно достаточно указать:
+Для YandexGPT укажите API-ключ AI Studio и либо готовый URI модели, либо ID каталога:
+
+```env
+YANDEXGPT_API_KEY=your_key_here
+YANDEXGPT_FOLDER_ID=b1g...
+YANDEXGPT_MODEL=gpt://b1g.../yandexgpt-lite/latest
+```
+
+Если `YANDEXGPT_MODEL` не задан, бот соберет модель из `YANDEXGPT_FOLDER_ID`:
+`gpt://<YANDEXGPT_FOLDER_ID>/yandexgpt-lite/latest`.
+
+OpenRouter можно оставить как резервный вариант:
 
 ```env
 OPENROUTER_API_KEY=your_key_here
 OPENROUTER_MODEL=openai/gpt-4o-mini
 ```
 
-Если `OPENROUTER_API_KEY` не задан, бот по-прежнему может использовать старый путь через `GEMINI_API_KEY`.
+Приоритет провайдеров: `YANDEXGPT_API_KEY`, затем `OPENROUTER_API_KEY`, затем `GEMINI_API_KEY`.
 
 ## Фоновые задачи Celery
 

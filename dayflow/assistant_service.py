@@ -141,9 +141,15 @@ class AssistantService:
 
     @property
     def enabled(self) -> bool:
-        return bool(self.settings.openrouter_api_key or self.settings.gemini_api_key)
+        return bool(
+            self.settings.yandexgpt_api_key
+            or self.settings.openrouter_api_key
+            or self.settings.gemini_api_key
+        )
 
     def _provider_name(self) -> str:
+        if self.settings.yandexgpt_api_key:
+            return "yandexgpt"
         if self.settings.openrouter_api_key:
             return "openrouter"
         return "gemini"
@@ -158,7 +164,10 @@ class AssistantService:
                 ),
             )
 
-        if self._provider_name() == "openrouter":
+        provider = self._provider_name()
+        if provider == "yandexgpt":
+            return self._plan_with_yandexgpt(message_text, event_groups=event_groups)
+        if provider == "openrouter":
             return self._plan_with_openrouter(message_text, event_groups=event_groups)
         return self._plan_with_gemini(message_text, event_groups=event_groups)
 
@@ -202,6 +211,9 @@ class AssistantService:
                 self._log_debug_response("OpenRouter", message_text, response)
                 payload = self._extract_openrouter_payload(response)
             except Exception as exc:
+                if self.settings.gemini_api_key and self._is_openrouter_security_policy_error(exc):
+                    logger.warning("OpenRouter blocked request by security policy; falling back to Gemini.")
+                    return self._plan_with_gemini(message_text, event_groups=event_groups)
                 raise self._map_openrouter_error(exc) from exc
         finally:
             if self.settings.openrouter_proxy_url:
@@ -222,6 +234,20 @@ class AssistantService:
                 else:
                     os.environ["https_proxy"] = previous_https_proxy_lower
 
+        return self._build_plan_from_payload(payload, message_text)
+
+    def _plan_with_yandexgpt(self, message_text: str, event_groups: Iterable[str] = ()) -> AssistantPlan:
+        user_prompt = self._build_user_prompt(message_text, event_groups=event_groups)
+        try:
+            try:
+                client = self._get_yandexgpt_client()
+                response = self._generate_yandexgpt_response(client, user_prompt)
+                self._log_debug_response("YandexGPT", message_text, response)
+                payload = self._extract_openai_chat_payload(response)
+            except Exception as exc:
+                raise self._map_yandexgpt_error(exc) from exc
+        except AssistantServiceError:
+            raise
         return self._build_plan_from_payload(payload, message_text)
 
     def _plan_with_gemini(self, message_text: str, event_groups: Iterable[str] = ()) -> AssistantPlan:
@@ -401,6 +427,23 @@ class AssistantService:
             self._client_provider = "openrouter"
         return self._client
 
+    def _get_yandexgpt_client(self):
+        if self._client is None or self._client_provider != "yandexgpt":
+            try:
+                from openai import OpenAI
+            except ImportError as exc:
+                raise AssistantServiceError(
+                    "Не могу обработать свободный запрос: не установлен OpenAI SDK для YandexGPT. "
+                    "Установите зависимости из requirements.txt и проверьте окружение."
+                ) from exc
+
+            self._client = OpenAI(
+                api_key=self.settings.yandexgpt_api_key,
+                base_url=self.settings.yandexgpt_base_url,
+            )
+            self._client_provider = "yandexgpt"
+        return self._client
+
     def _generate_openrouter_response(self, client, user_prompt: str):
         return client.chat.completions.create(
             model=self.settings.openrouter_model,
@@ -413,7 +456,32 @@ class AssistantService:
             response_format={"type": "json_object"},
         )
 
+    def _generate_yandexgpt_response(self, client, user_prompt: str):
+        return client.chat.completions.create(
+            model=self._yandexgpt_model(),
+            messages=[
+                {"role": "system", "content": self._SYSTEM_INSTRUCTION},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.1,
+            max_tokens=1400,
+            response_format={"type": "json_object"},
+        )
+
+    def _yandexgpt_model(self) -> str:
+        if self.settings.yandexgpt_model:
+            return self.settings.yandexgpt_model
+        if self.settings.yandexgpt_folder_id:
+            return f"gpt://{self.settings.yandexgpt_folder_id}/yandexgpt-lite/latest"
+        raise AssistantServiceError(
+            "Не могу обработать свободный запрос: для YandexGPT нужен YANDEXGPT_MODEL "
+            "или YANDEXGPT_FOLDER_ID."
+        )
+
     def _extract_openrouter_payload(self, response) -> dict:
+        return self._extract_openai_chat_payload(response)
+
+    def _extract_openai_chat_payload(self, response) -> dict:
         choices = getattr(response, "choices", None) or []
         for choice in choices:
             message = getattr(choice, "message", None)
@@ -670,9 +738,17 @@ class AssistantService:
                     body = None
 
         error_payload = body.get("error", body) if isinstance(body, dict) else {}
-        error_message = str(error_payload.get("message", getattr(exc, "message", ""))).strip()
+        if isinstance(error_payload, dict):
+            error_message = str(error_payload.get("message", getattr(exc, "message", ""))).strip()
+        else:
+            error_message = str(error_payload or getattr(exc, "message", "")).strip()
         exc_text = " ".join(part for part in (str(exc), error_message) if part).casefold()
 
+        if self._is_openrouter_security_policy_error(exc):
+            return AssistantServiceError(
+                "Не могу обработать свободный запрос: OpenRouter заблокировал запрос по security policy. "
+                "Нужен другой LLM-провайдер или OPENROUTER_PROXY_URL."
+            )
         if status_code in {401, 403}:
             return AssistantServiceError(
                 "Не могу обработать свободный запрос: OpenRouter не принял авторизацию. "
@@ -696,6 +772,70 @@ class AssistantService:
         return AssistantServiceError(
             "Не могу обработать свободный запрос из-за ошибки OpenRouter. Попробуйте позже."
         )
+
+    def _map_yandexgpt_error(self, exc: Exception) -> AssistantServiceError:
+        if isinstance(exc, AssistantServiceError):
+            return exc
+
+        status_code = getattr(exc, "status_code", None)
+        if status_code is None:
+            status_code = getattr(exc, "code", None)
+
+        body = getattr(exc, "body", None)
+        if body is None:
+            response = getattr(exc, "response", None)
+            if response is not None:
+                try:
+                    body = response.json()
+                except Exception:
+                    body = None
+
+        error_payload = body.get("error", body) if isinstance(body, dict) else {}
+        if isinstance(error_payload, dict):
+            error_message = str(error_payload.get("message", getattr(exc, "message", ""))).strip()
+        else:
+            error_message = str(error_payload or getattr(exc, "message", "")).strip()
+        exc_text = " ".join(part for part in (str(exc), error_message) if part).casefold()
+
+        if status_code in {401, 403}:
+            return AssistantServiceError(
+                "Не могу обработать свободный запрос: YandexGPT не принял авторизацию. "
+                "Проверьте YANDEXGPT_API_KEY и права каталога."
+            )
+        if status_code == 429 or "rate limit" in exc_text or "quota" in exc_text:
+            return AssistantServiceError(
+                "Не могу обработать свободный запрос: YandexGPT временно ограничивает частоту запросов "
+                "или закончилась квота."
+            )
+        if status_code in {400, 404}:
+            return AssistantServiceError(
+                "Не могу обработать свободный запрос: YandexGPT отклонил запрос. "
+                "Проверьте YANDEXGPT_MODEL или YANDEXGPT_FOLDER_ID."
+            )
+        if status_code and int(status_code) >= 500:
+            return AssistantServiceError(
+                "Не могу обработать свободный запрос: YandexGPT сейчас недоступен. Попробуйте позже."
+            )
+        return AssistantServiceError(
+            "Не могу обработать свободный запрос из-за ошибки YandexGPT. Попробуйте позже."
+        )
+
+    def _is_openrouter_security_policy_error(self, exc: Exception) -> bool:
+        body = getattr(exc, "body", None)
+        if body is None:
+            response = getattr(exc, "response", None)
+            if response is not None:
+                try:
+                    body = response.json()
+                except Exception:
+                    body = None
+        error_payload = body.get("error", body) if isinstance(body, dict) else {}
+        if isinstance(error_payload, dict):
+            error_message = str(error_payload.get("message", getattr(exc, "message", ""))).strip()
+        else:
+            error_message = str(error_payload or getattr(exc, "message", "")).strip()
+        exc_text = " ".join(part for part in (str(exc), error_message) if part).casefold()
+        return "access denied by security policy" in exc_text
 
     def _is_invalid_argument_error(self, exc: Exception) -> bool:
         status_code = getattr(exc, "status_code", None)

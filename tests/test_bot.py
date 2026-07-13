@@ -1590,6 +1590,196 @@ def test_assistant_plan_uses_openrouter_when_api_key_present(monkeypatch):
     assert plan.title == "купить подарок"
 
 
+def test_assistant_plan_uses_yandexgpt_when_api_key_present(monkeypatch):
+    settings = Settings(
+        telegram_bot_token="",
+        timezone="Europe/Moscow",
+        google_calendar_id="primary",
+        google_task_list_id="@default",
+        event_groups_path="data/event_groups.json",
+        google_credentials_path="credentials.json",
+        google_token_path="token.json",
+        google_tokens_dir="data/google_tokens",
+        work_schedule_path="data/work_schedule.json",
+        gemini_api_key="",
+        gemini_model="gemini-2.5-flash",
+        outbound_proxy_url="",
+        telegram_proxy_url="",
+        gemini_proxy_url="",
+        workday_start_hour=9,
+        workday_end_hour=18,
+        gemini_debug_logging=False,
+        openrouter_api_key="openrouter-key",
+        openrouter_model="openai/gpt-4o-mini",
+        openrouter_base_url="https://openrouter.ai/api/v1",
+        openrouter_proxy_url="",
+        yandexgpt_api_key="yandex-key",
+        yandexgpt_folder_id="folder-id",
+    )
+    service = AssistantService(settings)
+
+    monkeypatch.setattr(service, "_get_yandexgpt_client", lambda: object())
+    monkeypatch.setattr(
+        service,
+        "_generate_yandexgpt_response",
+        lambda *args, **kwargs: SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content='{"action":"create_task","reply":"ok","title":"купить подарок","notes":""}'
+                    )
+                )
+            ]
+        ),
+    )
+
+    plan = service.plan("Создай задачу купить подарок")
+
+    assert plan.action == "create_task"
+    assert plan.title == "купить подарок"
+
+
+def test_yandexgpt_model_uses_folder_id_when_model_is_empty():
+    settings = Settings(
+        telegram_bot_token="",
+        timezone="Europe/Moscow",
+        google_calendar_id="primary",
+        google_task_list_id="@default",
+        event_groups_path="data/event_groups.json",
+        google_credentials_path="credentials.json",
+        google_token_path="token.json",
+        google_tokens_dir="data/google_tokens",
+        work_schedule_path="data/work_schedule.json",
+        gemini_api_key="",
+        gemini_model="gemini-2.5-flash",
+        outbound_proxy_url="",
+        telegram_proxy_url="",
+        gemini_proxy_url="",
+        workday_start_hour=9,
+        workday_end_hour=18,
+        gemini_debug_logging=False,
+        yandexgpt_api_key="yandex-key",
+        yandexgpt_folder_id="folder-id",
+    )
+    service = AssistantService(settings)
+
+    assert service._yandexgpt_model() == "gpt://folder-id/yandexgpt-lite/latest"
+
+
+def test_yandexgpt_auth_error_has_specific_message():
+    settings = Settings(
+        telegram_bot_token="",
+        timezone="Europe/Moscow",
+        google_calendar_id="primary",
+        google_task_list_id="@default",
+        event_groups_path="data/event_groups.json",
+        google_credentials_path="credentials.json",
+        google_token_path="token.json",
+        google_tokens_dir="data/google_tokens",
+        work_schedule_path="data/work_schedule.json",
+        gemini_api_key="",
+        gemini_model="gemini-2.5-flash",
+        outbound_proxy_url="",
+        telegram_proxy_url="",
+        gemini_proxy_url="",
+        workday_start_hour=9,
+        workday_end_hour=18,
+        gemini_debug_logging=False,
+        yandexgpt_api_key="yandex-key",
+        yandexgpt_folder_id="folder-id",
+    )
+    service = AssistantService(settings)
+    exc = SimpleNamespace(status_code=403, body={"error": {"message": "Forbidden"}}, message="")
+
+    mapped = service._map_yandexgpt_error(exc)
+
+    assert "YandexGPT не принял авторизацию" in str(mapped)
+
+
+def test_openrouter_security_policy_error_has_specific_message():
+    settings = Settings(
+        telegram_bot_token="",
+        timezone="Europe/Moscow",
+        google_calendar_id="primary",
+        google_task_list_id="@default",
+        event_groups_path="data/event_groups.json",
+        google_credentials_path="credentials.json",
+        google_token_path="token.json",
+        google_tokens_dir="data/google_tokens",
+        work_schedule_path="data/work_schedule.json",
+        gemini_api_key="",
+        gemini_model="gemini-2.5-flash",
+        outbound_proxy_url="",
+        telegram_proxy_url="",
+        gemini_proxy_url="",
+        workday_start_hour=9,
+        workday_end_hour=18,
+        gemini_debug_logging=False,
+        openrouter_api_key="openrouter-key",
+        openrouter_model="openai/gpt-4o-mini",
+        openrouter_base_url="https://openrouter.ai/api/v1",
+        openrouter_proxy_url="",
+    )
+    service = AssistantService(settings)
+    exc = SimpleNamespace(
+        status_code=403,
+        body={"error": "Access denied by security policy."},
+        message="",
+    )
+
+    mapped = service._map_openrouter_error(exc)
+
+    assert "security policy" in str(mapped)
+    assert "OPENROUTER_API_KEY" not in str(mapped)
+
+
+def test_openrouter_security_policy_falls_back_to_gemini_when_configured(monkeypatch):
+    settings = Settings(
+        telegram_bot_token="",
+        timezone="Europe/Moscow",
+        google_calendar_id="primary",
+        google_task_list_id="@default",
+        event_groups_path="data/event_groups.json",
+        google_credentials_path="credentials.json",
+        google_token_path="token.json",
+        google_tokens_dir="data/google_tokens",
+        work_schedule_path="data/work_schedule.json",
+        gemini_api_key="gemini-key",
+        gemini_model="gemini-2.5-flash",
+        outbound_proxy_url="",
+        telegram_proxy_url="",
+        gemini_proxy_url="",
+        workday_start_hour=9,
+        workday_end_hour=18,
+        gemini_debug_logging=False,
+        openrouter_api_key="openrouter-key",
+        openrouter_model="openai/gpt-4o-mini",
+        openrouter_base_url="https://openrouter.ai/api/v1",
+        openrouter_proxy_url="",
+    )
+    service = AssistantService(settings)
+
+    class SecurityPolicyError(Exception):
+        status_code = 403
+        body = {"error": "Access denied by security policy."}
+
+    monkeypatch.setattr(service, "_get_openrouter_client", lambda: object())
+
+    def raise_security_policy(*args, **kwargs):
+        raise SecurityPolicyError("Access denied by security policy.")
+
+    monkeypatch.setattr(service, "_generate_openrouter_response", raise_security_policy)
+    monkeypatch.setattr(
+        service,
+        "_plan_with_gemini",
+        lambda *args, **kwargs: AssistantPlan(action="chat", reply="gemini ok"),
+    )
+
+    plan = service.plan("создай задачу")
+
+    assert plan.reply == "gemini ok"
+
+
 def test_openrouter_generation_requests_json_with_larger_token_limit():
     settings = Settings(
         telegram_bot_token="",
