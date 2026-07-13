@@ -39,14 +39,25 @@ def handler(event, context):
         if next_offset != offset:
             _set_state(STATE_NAMESPACE, OFFSET_KEY, next_offset)
 
+        process_queue_triggered = False
+        if updates:
+            process_queue_triggered = _trigger_process_queue()
+
         print(
-            f"telegram_poller: completed received={len(updates)} next_offset={next_offset}",
+            "telegram_poller: completed "
+            f"received={len(updates)} next_offset={next_offset} "
+            f"process_queue_triggered={process_queue_triggered}",
             flush=True,
         )
         return {
             "statusCode": 200,
             "body": json.dumps(
-                {"ok": True, "received": len(updates), "next_offset": next_offset}
+                {
+                    "ok": True,
+                    "received": len(updates),
+                    "next_offset": next_offset,
+                    "process_queue_triggered": process_queue_triggered,
+                }
             ),
         }
     except Exception as exc:
@@ -100,6 +111,29 @@ def _enqueue(payload: dict[str, Any]) -> None:
         "last_error": "",
     }
     _set_state(QUEUE_NAMESPACE, key, value)
+
+
+def _trigger_process_queue() -> bool:
+    url = os.environ.get("PROCESS_QUEUE_URL", "").strip()
+    secret = os.environ.get("CRON_SECRET", "").strip()
+    if not url:
+        print("telegram_poller: PROCESS_QUEUE_URL is empty; queue processor was not triggered", flush=True)
+        return False
+    if not secret:
+        print("telegram_poller: CRON_SECRET is empty; queue processor was not triggered", flush=True)
+        return False
+
+    separator = "&" if "?" in url else "?"
+    request = urllib.request.Request(
+        f"{url}{separator}secret={urllib.parse.quote(secret)}",
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        body = response.read().decode("utf-8")
+    print(f"telegram_poller: process queue triggered status={response.status} body={body}", flush=True)
+    return True
 
 
 def _get_state(namespace: str, key: str):
