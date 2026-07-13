@@ -1381,6 +1381,40 @@ def test_finalize_pending_task_create_calls_tasks_service(monkeypatch):
     assert "task-1" not in update.message.replies[0]["text"]
 
 
+def test_pending_draft_store_loads_draft_from_persistent_state(monkeypatch):
+    state = {}
+
+    class FakeStateStore:
+        def set(self, namespace, key, value):
+            state[(namespace, key)] = value
+
+        def get(self, namespace, key):
+            return state.get((namespace, key))
+
+        def delete(self, namespace, key):
+            return state.pop((namespace, key), None) is not None
+
+    settings = bot.replace(bot.settings, storage_backend="ydb")
+    monkeypatch.setattr(bot, "build_ydb_state_store", lambda settings: FakeStateStore())
+    draft = bot.TaskCreateDraft(
+        kind="task_create",
+        title="Купить подарок",
+        due_date=date(2026, 3, 29),
+        notes="до выходных",
+        task_list_name="Inbox",
+        subtasks=(AssistantSubtask(title="выбрать"),),
+    )
+    first_store = bot.PendingDraftStore(settings)
+    first_store[123] = draft
+
+    second_store = bot.PendingDraftStore(settings)
+    loaded = second_store.get(123)
+
+    assert loaded == draft
+    assert second_store.pop(123) == draft
+    assert (bot.PENDING_DRAFTS_NAMESPACE, "123") not in state
+
+
 def test_finalize_pending_task_update_replaces_subtasks(monkeypatch):
     tasks = FakeTasksService()
     monkeypatch.setattr(bot, "tasks_service", tasks)

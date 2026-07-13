@@ -45,6 +45,7 @@ from dayflow.work_schedule_store import (
     parse_time_to_minutes,
     parse_weekdays,
 )
+from dayflow.ydb_state_store import build_ydb_state_store
 
 
 logging.basicConfig(
@@ -155,6 +156,220 @@ Draft = (
 )
 
 
+PENDING_DRAFTS_NAMESPACE = "pending_drafts"
+
+
+def _calendar_event_to_payload(event: CalendarEvent) -> dict:
+    return {
+        "event_id": event.event_id,
+        "title": event.title,
+        "start": event.start.isoformat(),
+        "end": event.end.isoformat(),
+        "html_link": event.html_link,
+        "color_id": event.color_id,
+    }
+
+
+def _calendar_event_from_payload(payload: dict) -> CalendarEvent:
+    return CalendarEvent(
+        event_id=payload["event_id"],
+        title=payload["title"],
+        start=datetime.fromisoformat(payload["start"]),
+        end=datetime.fromisoformat(payload["end"]),
+        html_link=payload.get("html_link", ""),
+        color_id=payload.get("color_id"),
+    )
+
+
+def _subtask_to_payload(subtask) -> dict:
+    if isinstance(subtask, AssistantSubtask):
+        return {"title": subtask.title, "notes": subtask.notes}
+    return {"title": str(subtask), "notes": ""}
+
+
+def _subtask_from_payload(payload: dict) -> AssistantSubtask:
+    return AssistantSubtask(title=str(payload.get("title", "")), notes=str(payload.get("notes", "")))
+
+
+def _draft_to_payload(draft: Draft) -> dict:
+    payload = {"kind": draft.kind}
+    if isinstance(draft, EventCreateDraft):
+        payload.update(
+            {
+                "title": draft.title,
+                "start_at": draft.start_at.isoformat(),
+                "duration_minutes": draft.duration_minutes,
+                "group_name": draft.group_name,
+                "conflicts": [_calendar_event_to_payload(item) for item in draft.conflicts],
+            }
+        )
+    elif isinstance(draft, EventUpdateDraft):
+        payload.update(
+            {
+                "event_id": draft.event_id,
+                "original_title": draft.original_title,
+                "new_title": draft.new_title,
+                "start_at": draft.start_at.isoformat(),
+                "duration_minutes": draft.duration_minutes,
+                "group_name": draft.group_name,
+                "conflicts": [_calendar_event_to_payload(item) for item in draft.conflicts],
+            }
+        )
+    elif isinstance(draft, EventDeleteDraft):
+        payload.update(
+            {
+                "title": draft.title,
+                "event_ids": list(draft.event_ids),
+                "start_ats": [item.isoformat() for item in draft.start_ats],
+            }
+        )
+    elif isinstance(draft, TaskCreateDraft):
+        payload.update(
+            {
+                "title": draft.title,
+                "due_date": draft.due_date.isoformat() if draft.due_date else "",
+                "notes": draft.notes,
+                "task_list_name": draft.task_list_name,
+                "subtasks": [_subtask_to_payload(item) for item in draft.subtasks],
+            }
+        )
+    elif isinstance(draft, TaskUpdateDraft):
+        payload.update(
+            {
+                "task_id": draft.task_id,
+                "task_list_name": draft.task_list_name,
+                "original_title": draft.original_title,
+                "new_title": draft.new_title,
+                "due_date": draft.due_date.isoformat() if draft.due_date else "",
+                "notes": draft.notes,
+                "subtasks": [_subtask_to_payload(item) for item in draft.subtasks],
+            }
+        )
+    elif isinstance(draft, (TaskDeleteDraft, TaskCompleteDraft)):
+        payload.update({"task_id": draft.task_id, "task_list_name": draft.task_list_name, "title": draft.title})
+    return payload
+
+
+def _draft_from_payload(payload: dict) -> Draft:
+    kind = payload["kind"]
+    if kind == "event_create":
+        return EventCreateDraft(
+            kind="event_create",
+            title=payload["title"],
+            start_at=datetime.fromisoformat(payload["start_at"]),
+            duration_minutes=int(payload["duration_minutes"]),
+            group_name=payload.get("group_name", ""),
+            conflicts=tuple(_calendar_event_from_payload(item) for item in payload.get("conflicts", [])),
+        )
+    if kind == "event_update":
+        return EventUpdateDraft(
+            kind="event_update",
+            event_id=payload["event_id"],
+            original_title=payload["original_title"],
+            new_title=payload["new_title"],
+            start_at=datetime.fromisoformat(payload["start_at"]),
+            duration_minutes=int(payload["duration_minutes"]),
+            group_name=payload.get("group_name", ""),
+            conflicts=tuple(_calendar_event_from_payload(item) for item in payload.get("conflicts", [])),
+        )
+    if kind == "event_delete":
+        return EventDeleteDraft(
+            kind="event_delete",
+            title=payload["title"],
+            event_ids=tuple(payload.get("event_ids", [])),
+            start_ats=tuple(datetime.fromisoformat(item) for item in payload.get("start_ats", [])),
+        )
+    if kind == "task_create":
+        due_date = payload.get("due_date") or ""
+        return TaskCreateDraft(
+            kind="task_create",
+            title=payload["title"],
+            due_date=date.fromisoformat(due_date) if due_date else None,
+            notes=payload.get("notes", ""),
+            task_list_name=payload["task_list_name"],
+            subtasks=tuple(_subtask_from_payload(item) for item in payload.get("subtasks", [])),
+        )
+    if kind == "task_update":
+        due_date = payload.get("due_date") or ""
+        return TaskUpdateDraft(
+            kind="task_update",
+            task_id=payload["task_id"],
+            task_list_name=payload["task_list_name"],
+            original_title=payload["original_title"],
+            new_title=payload["new_title"],
+            due_date=date.fromisoformat(due_date) if due_date else None,
+            notes=payload.get("notes", ""),
+            subtasks=tuple(_subtask_from_payload(item) for item in payload.get("subtasks", [])),
+        )
+    if kind == "task_delete":
+        return TaskDeleteDraft(
+            kind="task_delete",
+            task_id=payload["task_id"],
+            task_list_name=payload["task_list_name"],
+            title=payload["title"],
+        )
+    if kind == "task_complete":
+        return TaskCompleteDraft(
+            kind="task_complete",
+            task_id=payload["task_id"],
+            task_list_name=payload["task_list_name"],
+            title=payload["title"],
+        )
+    raise ValueError(f"Unknown draft kind: {kind}")
+
+
+class PendingDraftStore(dict[int, Draft]):
+    def __init__(self, settings) -> None:
+        super().__init__()
+        self.settings = settings
+        self._state = None
+
+    def _persistent_enabled(self) -> bool:
+        return self.settings.storage_backend == "ydb"
+
+    def _state_store(self):
+        if self._state is None:
+            self._state = build_ydb_state_store(self.settings)
+        return self._state
+
+    def __setitem__(self, key: int, value: Draft) -> None:
+        super().__setitem__(key, value)
+        if self._persistent_enabled():
+            self._state_store().set(PENDING_DRAFTS_NAMESPACE, str(key), _draft_to_payload(value))
+
+    def __contains__(self, key: object) -> bool:
+        if super().__contains__(key):
+            return True
+        if not isinstance(key, int) or not self._persistent_enabled():
+            return False
+        return self._load(key) is not None
+
+    def get(self, key: int, default=None):
+        draft = super().get(key)
+        if draft is not None:
+            return draft
+        if self._persistent_enabled():
+            draft = self._load(key)
+            if draft is not None:
+                return draft
+        return default
+
+    def pop(self, key: int, default=None):
+        draft = self.get(key, default)
+        super().pop(key, None)
+        if self._persistent_enabled():
+            self._state_store().delete(PENDING_DRAFTS_NAMESPACE, str(key))
+        return draft
+
+    def _load(self, key: int) -> Draft | None:
+        payload = self._state_store().get(PENDING_DRAFTS_NAMESPACE, str(key))
+        if not payload:
+            return None
+        draft = _draft_from_payload(payload)
+        super().__setitem__(key, draft)
+        return draft
+
+
 settings = load_settings()
 calendar_service = GoogleCalendarService(settings)
 assistant_service = AssistantService(settings)
@@ -165,7 +380,7 @@ work_schedule_store = build_work_schedule_store(settings)
 work_schedule = work_schedule_store.load()
 user_profile_store = build_user_profile_store(settings)
 google_auth_session_store = build_google_auth_session_store(settings)
-pending_drafts: dict[int, Draft] = {}
+pending_drafts: PendingDraftStore = PendingDraftStore(settings)
 pending_clarifications: dict[int, PendingClarification] = {}
 pending_selections: dict[int, PendingSelection] = {}
 pending_slot_selections: dict[int, PendingSlotSelection] = {}
