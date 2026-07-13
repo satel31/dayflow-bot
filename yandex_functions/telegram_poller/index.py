@@ -130,7 +130,7 @@ def _trigger_process_queue() -> bool:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
+    with urllib.request.urlopen(request, timeout=55) as response:
         body = response.read().decode("utf-8")
     print(f"telegram_poller: process queue triggered status={response.status} body={body}", flush=True)
     return True

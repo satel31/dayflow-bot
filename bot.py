@@ -2417,7 +2417,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     global work_schedule
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except TelegramError as exc:
+        logger.warning("Failed to answer callback query; continuing handler: %s", exc)
     chat_id = update.effective_chat.id
     user_id = get_actor_id(update)
     calendar = get_calendar_service(user_id)

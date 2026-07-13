@@ -774,6 +774,45 @@ def test_callback_handler_turns_slot_into_event_draft(monkeypatch):
     assert 'Создать событие "Запись на брови"' in query.edits[0]["text"]
 
 
+def test_callback_handler_confirms_draft_when_callback_answer_is_expired(monkeypatch):
+    tasks = FakeTasksService()
+    monkeypatch.setattr(bot, "tasks_service", tasks)
+    bot.pending_drafts[123] = bot.TaskCreateDraft(
+        kind="task_create",
+        title="Купить подарок",
+        due_date=date(2026, 3, 29),
+        notes="до выходных",
+        task_list_name="Inbox",
+        subtasks=(),
+    )
+
+    class ExpiredCallbackQuery(FakeCallbackQuery):
+        async def answer(self) -> None:
+            raise bot.TelegramError("Query is too old")
+
+    query = ExpiredCallbackQuery("draft:confirm")
+    update = SimpleNamespace(
+        effective_chat=SimpleNamespace(id=123),
+        effective_user=None,
+        callback_query=query,
+        message=None,
+    )
+
+    asyncio.run(bot.callback_handler(update, None))
+
+    assert tasks.created_calls == [
+        {
+            "title": "Купить подарок",
+            "due_date": date(2026, 3, 29),
+            "notes": "до выходных",
+            "task_list_name": "Inbox",
+            "subtasks": [],
+        }
+    ]
+    assert query.edits[0]["text"] == "Подтверждение получено. Выполняю..."
+    assert 'Задача создана: "Купить подарок"' in query.message.replies[0]["text"]
+
+
 def test_text_message_turns_pending_slot_selection_into_event_draft(monkeypatch):
     calendar = FakeCalendarService()
     monkeypatch.setattr(bot, "calendar_service", calendar)
