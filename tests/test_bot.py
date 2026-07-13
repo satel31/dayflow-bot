@@ -1666,6 +1666,43 @@ def test_yandexgpt_model_uses_folder_id_when_model_is_empty():
     assert service._yandexgpt_model() == "gpt://folder-id/yandexgpt-lite/latest"
 
 
+def test_yandexgpt_client_uses_api_key_authorization(monkeypatch):
+    settings = Settings(
+        telegram_bot_token="",
+        timezone="Europe/Moscow",
+        google_calendar_id="primary",
+        google_task_list_id="@default",
+        event_groups_path="data/event_groups.json",
+        google_credentials_path="credentials.json",
+        google_token_path="token.json",
+        google_tokens_dir="data/google_tokens",
+        work_schedule_path="data/work_schedule.json",
+        gemini_api_key="",
+        gemini_model="gemini-2.5-flash",
+        outbound_proxy_url="",
+        telegram_proxy_url="",
+        gemini_proxy_url="",
+        workday_start_hour=9,
+        workday_end_hour=18,
+        gemini_debug_logging=False,
+        yandexgpt_api_key="yandex-key",
+        yandexgpt_folder_id="folder-id",
+    )
+    service = AssistantService(settings)
+    captured = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+
+    service._get_yandexgpt_client()
+
+    assert captured["api_key"] == "unused"
+    assert captured["default_headers"] == {"Authorization": "Api-Key yandex-key"}
+
+
 def test_yandexgpt_auth_error_has_specific_message():
     settings = Settings(
         telegram_bot_token="",

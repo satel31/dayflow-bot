@@ -438,8 +438,9 @@ class AssistantService:
                 ) from exc
 
             self._client = OpenAI(
-                api_key=self.settings.yandexgpt_api_key,
+                api_key="unused",
                 base_url=self.settings.yandexgpt_base_url,
+                default_headers={"Authorization": f"Api-Key {self.settings.yandexgpt_api_key}"},
             )
             self._client_provider = "yandexgpt"
         return self._client
