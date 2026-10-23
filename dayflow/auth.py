@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 
@@ -43,7 +46,12 @@ def load_google_credentials(settings: Settings, user_id: int | None = None) -> C
     creds = Credentials.from_authorized_user_info(json.loads(token_json), GOOGLE_SCOPES) if token_json else None
 
     if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
+        try:
+            creds.refresh(Request())
+        except RefreshError as exc:
+            raise GoogleAuthRequiredError(
+                "Срок действия доступа Google истёк. Подключите аккаунт заново."
+            ) from exc
         _write_token_json(settings, user_id, creds.to_json())
         return creds
 
@@ -66,8 +74,13 @@ def load_google_credentials(settings: Settings, user_id: int | None = None) -> C
     )
 
 
-def build_google_auth_session(settings: Settings, user_id: int) -> GoogleAuthSession:
-    redirect_uri = (
+def build_google_auth_session(
+    settings: Settings,
+    user_id: int | None,
+    *,
+    redirect_uri: str | None = None,
+) -> GoogleAuthSession:
+    redirect_uri = redirect_uri or (
         f"{settings.webhook_base_url}/google/oauth/callback"
         if settings.webhook_base_url
         else f"http://localhost:{random.randint(49152, 65535)}/"
@@ -91,7 +104,7 @@ def build_google_auth_session(settings: Settings, user_id: int) -> GoogleAuthSes
 
 def complete_google_auth(
     settings: Settings,
-    user_id: int,
+    user_id: int | None,
     session: GoogleAuthSession,
     authorization_response: str,
 ) -> Credentials:
@@ -103,7 +116,22 @@ def complete_google_auth(
         code_verifier=session.code_verifier,
         autogenerate_code_verifier=False,
     )
-    flow.fetch_token(authorization_response=authorization_response.replace("http://", "https://", 1))
+    if session.redirect_uri.startswith("https://"):
+        authorization_response = authorization_response.replace("http://", "https://", 1)
+
+    redirect_host = (urlparse(session.redirect_uri).hostname or "").casefold()
+    allow_local_http = redirect_host in {"localhost", "127.0.0.1", "::1"}
+    previous_insecure_transport = os.environ.get("OAUTHLIB_INSECURE_TRANSPORT")
+    if allow_local_http:
+        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+    try:
+        flow.fetch_token(authorization_response=authorization_response)
+    finally:
+        if allow_local_http:
+            if previous_insecure_transport is None:
+                os.environ.pop("OAUTHLIB_INSECURE_TRANSPORT", None)
+            else:
+                os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = previous_insecure_transport
     creds = flow.credentials
     _write_token_json(settings, user_id, creds.to_json())
     return creds

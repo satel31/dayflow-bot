@@ -15,6 +15,9 @@ TABLE_NAME = "dayflow_state"
 QUEUE_NAMESPACE = "telegram_update_queue"
 STATE_NAMESPACE = "telegram_poller"
 OFFSET_KEY = "offset"
+GET_UPDATES_ATTEMPTS = 1
+GET_UPDATES_TIMEOUT_SECONDS = 2
+PROCESS_QUEUE_TIMEOUT_SECONDS = 5
 
 _driver = None
 _pool = None
@@ -86,12 +89,12 @@ def _get_updates(token: str, offset: int) -> list[dict[str, Any]]:
         method="POST",
     )
 
+    attempts = _env_int("TELEGRAM_GET_UPDATES_ATTEMPTS", GET_UPDATES_ATTEMPTS)
+    timeout = _env_int("TELEGRAM_GET_UPDATES_TIMEOUT_SECONDS", GET_UPDATES_TIMEOUT_SECONDS)
     last_error = None
-    for attempt, delay in enumerate((0, 1, 3), start=1):
-        if delay:
-            time.sleep(delay)
+    for attempt in range(1, attempts + 1):
         try:
-            with urllib.request.urlopen(request, timeout=8) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             if not payload.get("ok"):
                 raise RuntimeError(f"Telegram getUpdates failed: {payload}")
@@ -130,10 +133,23 @@ def _trigger_process_queue() -> bool:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=55) as response:
+    timeout = _env_int("PROCESS_QUEUE_TIMEOUT_SECONDS", PROCESS_QUEUE_TIMEOUT_SECONDS)
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         body = response.read().decode("utf-8")
     print(f"telegram_poller: process queue triggered status={response.status} body={body}", flush=True)
     return True
+
+
+def _env_int(name: str, default: int) -> int:
+    raw_value = os.environ.get(name, "").strip()
+    if not raw_value:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError:
+        print(f"telegram_poller: invalid {name}={raw_value!r}; using {default}", flush=True)
+        return default
+    return max(1, value)
 
 
 def _get_state(namespace: str, key: str):

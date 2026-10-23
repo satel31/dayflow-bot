@@ -44,6 +44,25 @@ class GoogleCalendarService:
         items = events_result.get("items", [])
         return [self._to_event(item) for item in items if "dateTime" in item.get("start", {})]
 
+    def get_event_colors(self) -> dict[str, str]:
+        """Return the account's current Google Calendar event color palette."""
+        result = self._get_service().colors().get().execute()
+        return {
+            str(color_id): str(values["background"])
+            for color_id, values in result.get("event", {}).items()
+            if values.get("background")
+        }
+
+    def get_calendar_color(self) -> str | None:
+        """Return the effective background color of the configured calendar."""
+        result = (
+            self._get_service()
+            .calendarList()
+            .get(calendarId=self.settings.google_calendar_id)
+            .execute()
+        )
+        return result.get("backgroundColor")
+
     def find_free_slots(
         self, target_date: date, duration_minutes: int = 60
     ) -> list[tuple[datetime, datetime]]:
@@ -288,9 +307,9 @@ class GoogleCalendarService:
             "start": {"dateTime": start_at.isoformat(), "timeZone": self.settings.timezone},
             "end": {"dateTime": end_at.isoformat(), "timeZone": self.settings.timezone},
         }
-        if color_id:
+        if color_id is not None and color_id:
             body["colorId"] = color_id
-        elif existing.get("colorId"):
+        elif color_id is None and existing.get("colorId"):
             body["colorId"] = existing["colorId"]
         updated = (
             self._get_service()

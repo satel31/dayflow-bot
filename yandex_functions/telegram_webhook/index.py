@@ -6,12 +6,16 @@ import os
 import secrets
 from time import time
 from typing import Any
+import urllib.error
+import urllib.parse
+import urllib.request
 
 import ydb
 
 
 TABLE_NAME = "dayflow_state"
 QUEUE_NAMESPACE = "telegram_update_queue"
+PROCESS_QUEUE_TIMEOUT_SECONDS = 3
 
 _driver = None
 _pool = None
@@ -52,7 +56,8 @@ def _handle(event: dict[str, Any]):
     print(f"telegram_webhook: enqueue started update_id={payload.get('update_id')}", flush=True)
     key = _enqueue(payload)
     print(f"telegram_webhook: enqueue completed key={key}", flush=True)
-    return _response(200, {"ok": True, "queued": key})
+    process_queue_triggered = _trigger_process_queue()
+    return _response(200, {"ok": True, "queued": key, "process_queue_triggered": process_queue_triggered})
 
 
 def _enqueue(payload: dict[str, Any]) -> str:
@@ -98,6 +103,46 @@ def _execute(query: str, params: dict[str, Any]) -> list:
     result = pool.retry_operation_sync(operation)
     print("telegram_webhook: YDB execute completed", flush=True)
     return result
+
+
+def _trigger_process_queue() -> bool:
+    url = os.environ.get("PROCESS_QUEUE_URL", "").strip()
+    secret = os.environ.get("CRON_SECRET", "").strip()
+    if not url:
+        print("telegram_webhook: PROCESS_QUEUE_URL is empty; queue processor was not triggered", flush=True)
+        return False
+    if not secret:
+        print("telegram_webhook: CRON_SECRET is empty; queue processor was not triggered", flush=True)
+        return False
+
+    separator = "&" if "?" in url else "?"
+    request = urllib.request.Request(
+        f"{url}{separator}secret={urllib.parse.quote(secret)}",
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    timeout = _env_int("PROCESS_QUEUE_TIMEOUT_SECONDS", PROCESS_QUEUE_TIMEOUT_SECONDS)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8")
+        print(f"telegram_webhook: process queue triggered status={response.status} body={body}", flush=True)
+        return True
+    except (TimeoutError, urllib.error.URLError) as exc:
+        print(f"telegram_webhook: process queue trigger failed: {exc}", flush=True)
+        return False
+
+
+def _env_int(name: str, default: int) -> int:
+    raw_value = os.environ.get(name, "").strip()
+    if not raw_value:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError:
+        print(f"telegram_webhook: invalid {name}={raw_value!r}; using {default}", flush=True)
+        return default
+    return max(1, value)
 
 
 def _pool_instance():

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f1ea">
+  <title>DayFlow</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <link rel="stylesheet" href="/assets/auth.css">
+  <link rel="stylesheet" href="/assets/week.css">
+  <link rel="stylesheet" href="/assets/ui-overrides.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="/">dayflow<span>°</span></a>
+      <nav><button type="button" id="dayView" class="nav-active">Сегодня</button><button type="button" id="weekView">Неделя</button></nav>
+      <button type="button" class="avatar" id="reconnectGoogle" aria-label="Переподключить Google" title="Переподключить Google">Я</button>
+    </header>
+
+    <section class="hero">
+      <div><p class="eyebrow" id="dateLabel">СЕГОДНЯ</p><h1 id="greeting">Привет</h1><p id="summary">Собираю твой день…</p></div>
+      <div class="hero-actions"><button class="secondary" id="addEventButton"><span>＋</span> Событие</button><button class="primary" id="addButton"><span>＋</span> Задача</button></div>
+    </section>
+
+    <div class="notice hidden" id="notice"><span id="noticeText"></span><button class="connect hidden" id="connectGoogle">Подключить Google</button></div>
+    <section class="grid">
+      <article class="panel timeline-panel">
+        <div class="panel-head"><h2>Расписание</h2><input id="dayPicker" type="date" aria-label="Выбрать день"></div>
+        <div class="timeline" id="events"><div class="empty">Загружаю календарь…</div></div>
+      </article>
+
+      <div class="side">
+        <article class="panel tasks-panel">
+          <div class="panel-head"><h2>Задачи</h2><span class="count" id="taskCount">0</span></div>
+          <div class="task-filters"><select id="taskListFilter" aria-label="Фильтр списка задач"><option value="">Все списки</option></select><input id="taskDayPicker" type="date" aria-label="Задачи к дате"></div>
+          <div id="tasks"><div class="empty">Загружаю задачи…</div></div>
+        </article>
+        <article class="panel focus-panel">
+          <p class="eyebrow">СВОБОДНОЕ ВРЕМЯ</p><h2>Найти окно для фокуса</h2>
+          <div class="focus-dates"><label>С<input id="focusStartDate" type="date"></label><label>По<input id="focusEndDate" type="date"></label></div>
+          <div class="focus-dates"><label>Не раньше<input id="focusStartTime" type="time" value="07:00"></label><label>Не позже<input id="focusEndTime" type="time" value="22:00"></label></div>
+          <div class="chips"><button data-duration="30">30 мин</button><button class="selected" data-duration="60">1 час</button><button data-duration="90">1,5 часа</button></div>
+          <button type="button" class="focus-search" id="findSlots">Найти свободное окно</button>
+          <div id="slots" class="slots"></div>
+        </article>
+        <article class="panel groups-panel">
+          <div class="panel-head"><h2>Группы событий</h2><button type="button" class="text-action" id="manageGroups">Управлять</button></div>
+          <div class="group-chips" id="groupsOverview"></div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="taskDialog">
+    <form id="taskForm">
+      <button type="button" class="close" id="closeDialog" aria-label="Закрыть">×</button>
+      <p class="eyebrow">НОВАЯ ЗАДАЧА</p><h2>Что нужно сделать?</h2>
+      <label>Название<input name="title" required maxlength="300" autofocus placeholder="Например, отправить документы"></label>
+      <label>Срок<input name="due_date" type="date"></label>
+      <label>Список<select name="tasklist_name" id="taskList"><option value="">Загружаю списки…</option></select></label>
+      <label>Заметка<textarea name="notes" rows="3" placeholder="Необязательно"></textarea></label>
+      <button class="primary submit" type="submit">Добавить</button>
+    </form>
+  </dialog>
+  <dialog id="eventDialog">
+    <form id="eventForm">
+      <button type="button" class="close" id="closeEventDialog" aria-label="Закрыть">×</button>
+      <p class="eyebrow" id="eventDialogEyebrow">НОВОЕ СОБЫТИЕ</p><h2 id="eventDialogTitle">Что планируем?</h2>
+      <label>Название<input name="title" required maxlength="300" placeholder="Например, созвон с командой"></label>
+      <div class="form-row"><label>Дата<input name="event_date" type="date" required></label><label>Начало<input name="start_time" type="time" required></label></div>
+      <label>Продолжительность<select name="duration_minutes"><option value="30">30 минут</option><option value="60" selected>1 час</option><option value="90">1,5 часа</option><option value="120">2 часа</option></select></label>
+      <label>Группа<span class="label-row"><span>Выбор группы</span><button type="button" class="text-action" id="addGroupButton">＋ Новая группа</button></span><select name="group_name" id="eventGroup"><option value="">Без группы</option></select><small class="prediction" id="groupPrediction"></small></label>
+      <div class="dialog-actions"><button class="danger hidden" id="deleteEvent" type="button">Удалить</button><button class="primary submit" id="saveEvent" type="submit">Добавить событие</button></div>
+    </form>
+  </dialog>
+  <dialog id="groupDialog">
+    <form id="groupForm">
+      <button type="button" class="close" id="closeGroupDialog" aria-label="Закрыть">×</button>
+      <p class="eyebrow" id="groupDialogEyebrow">НОВАЯ ГРУППА</p><h2 id="groupDialogTitle">Как её назовём?</h2>
+      <label>Название<input name="name" required maxlength="100" placeholder="Например, Учёба"></label>
+      <label>Цвет<input type="hidden" name="color" id="groupColor" required><div class="color-palette" id="groupColorPalette"></div></label>
+      <button class="primary submit" id="saveGroup" type="submit">Создать группу</button>
+      <div class="existing-groups"><p class="eyebrow">СУЩЕСТВУЮЩИЕ ГРУППЫ</p><div id="existingGroups"></div></div>
+    </form>
+  </dialog>
+  <script src="/assets/app.js?v=24" defer></script>
+</body>
+</html>

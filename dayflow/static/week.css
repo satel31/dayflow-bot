@@ -1,0 +1,47 @@
+.grid {
+  align-items: start;
+}
+
+.timeline-panel {
+  align-self: start;
+}
+
+.week-list {
+  display: grid;
+  gap: 2px;
+}
+
+.week-day {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 18px;
+  padding: 17px 0;
+  border-top: 1px solid var(--line);
+}
+
+.week-day:first-child { border-top: 0; }
+.week-date strong, .week-date span { display: block; }
+.week-date strong { text-transform: capitalize; }
+.week-date span { color: var(--muted); font-size: 13px; }
+.week-date.is-today strong { color: var(--accent); }
+.week-events { display: grid; gap: 7px; }
+.week-event {
+  display: grid;
+  grid-template-columns: 94px 1fr;
+  gap: 10px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--event-color, var(--accent));
+  background: #f6f2ea;
+  border-radius: 3px 8px 8px 3px;
+}
+.week-event time { color: var(--muted); font-size: 13px; }
+.week-event a { color: var(--ink); text-decoration: none; font-weight: 700; }
+.week-empty { color: var(--muted); padding: 8px 0; }
+
+@media (max-width: 780px) {
+  .topbar nav { display: flex; }
+  .topbar { grid-template-columns: auto 1fr auto; gap: 8px; }
+  nav button { padding: 8px 11px; }
+  .week-day { grid-template-columns: 75px 1fr; gap: 10px; }
+  .week-event { grid-template-columns: 1fr; gap: 2px; }
+}

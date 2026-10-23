@@ -60,6 +60,19 @@ class EventGroupStore:
                 return True
         return False
 
+    def update_group(self, current_name: str, new_name: str, color: str) -> tuple[str, str]:
+        groups = self._read()
+        existing = next((name for name in groups if name.casefold() == current_name.strip().casefold()), None)
+        if existing is None:
+            raise KeyError(current_name)
+        normalized_name = new_name.strip()
+        color_id = self._normalize_color(color)
+        if existing != normalized_name:
+            del groups[existing]
+        groups[normalized_name] = color_id
+        self._write(groups)
+        return normalized_name, color_id
+
     def resolve_group_name(self, name: str) -> str | None:
         if not name:
             return None

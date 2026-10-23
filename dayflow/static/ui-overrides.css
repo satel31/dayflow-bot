@@ -1,0 +1,87 @@
+.task.task-child {
+  margin-left: 24px;
+}
+
+.task.task-child::before {
+  display: none;
+}
+
+.inline-group-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.inline-group-row select {
+  grid-column: auto !important;
+}
+
+.inline-add-group {
+  border: 0;
+  background: none;
+  color: var(--green);
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.color-palette {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 9px;
+}
+
+.color-choice {
+  width: 34px;
+  height: 34px;
+  border: 3px solid transparent;
+  border-radius: 50%;
+  background: var(--choice-color);
+  cursor: pointer;
+}
+
+.color-choice.selected {
+  border-color: var(--card);
+  box-shadow: 0 0 0 2px var(--ink);
+}
+
+.existing-groups {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.existing-group {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 0;
+}
+
+.group-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--group-color); }
+.existing-group strong { flex: 1; }
+.delete-group { border: 0; background: transparent; color: #8b2f20; cursor: pointer; font-weight: 700; }
+.edit-group { border: 0; background: transparent; color: var(--green); cursor: pointer; font-weight: 700; }
+.group-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.group-chip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border-radius: 99px; background: #f1ede4; font-size: 13px; font-weight: 700; }
+
+body {
+  background:
+    radial-gradient(circle at 12% 8%, #f7dcd2 0, transparent 28%),
+    radial-gradient(circle at 88% 18%, #dbe9df 0, transparent 30%),
+    linear-gradient(145deg, #f7f4ed 0%, #eeeae1 100%);
+  background-attachment: fixed;
+}
+
+.panel { background: color-mix(in srgb, var(--card) 92%, transparent); backdrop-filter: blur(8px); }
+.focus-dates { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+.focus-dates label { margin: 0; font-size: 11px; color: var(--muted); }
+.focus-dates input { min-width: 0; width: 100%; padding: 8px; }
+.focus-search { width: 100%; border: 0; border-radius: 9px; padding: 11px; background: var(--green); color: white; font-weight: 700; cursor: pointer; }
+.slots { margin-top: 14px; }
+
+@media (max-width: 420px) {
+  .focus-dates { grid-template-columns: 1fr; }
+}

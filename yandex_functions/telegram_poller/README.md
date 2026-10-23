@@ -12,10 +12,24 @@ YDB_ENDPOINT
 YDB_DATABASE
 PROCESS_QUEUE_URL
 CRON_SECRET
+TELEGRAM_GET_UPDATES_ATTEMPTS
+TELEGRAM_GET_UPDATES_TIMEOUT_SECONDS
+PROCESS_QUEUE_TIMEOUT_SECONDS
 ```
 
 Attach the same service account as the container with the `ydb.editor` role.
 Delete the Telegram webhook before enabling the one-minute timer trigger.
+Do not enable the timer trigger until network access from the function to
+`https://api.telegram.org` is stable.
+
+The poller intentionally fails fast when Telegram is unreachable so a single
+timer tick cannot consume the whole Cloud Function timeout. Defaults:
+
+```text
+TELEGRAM_GET_UPDATES_ATTEMPTS=1
+TELEGRAM_GET_UPDATES_TIMEOUT_SECONDS=2
+PROCESS_QUEUE_TIMEOUT_SECONDS=5
+```
 
 `PROCESS_QUEUE_URL` is optional. When it is set, the poller calls the container
 queue processor only after Telegram returns new updates. Example:

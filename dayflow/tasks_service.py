@@ -20,6 +20,7 @@ class TaskItem:
     due: str
     status: str
     parent: str | None = None
+    position: str = ""
 
 
 class GoogleTasksService:
@@ -169,6 +170,7 @@ class GoogleTasksService:
         new_title: str | None = None,
         due_date: date | None = None,
         notes: str | None = None,
+        clear_due: bool = False,
     ) -> TaskItem:
         tasklist = self.resolve_tasklist(tasklist_name)
         existing = (
@@ -189,7 +191,7 @@ class GoogleTasksService:
         if due_date:
             due_at = datetime.combine(due_date, time(12, 0), tzinfo=self.tz)
             body["due"] = due_at.isoformat()
-        elif existing.get("due"):
+        elif not clear_due and existing.get("due"):
             body["due"] = existing["due"]
         updated = (
             self._get_service()
@@ -253,4 +255,5 @@ class GoogleTasksService:
             due=item.get("due", ""),
             status=item.get("status", "needsAction"),
             parent=item.get("parent"),
+            position=item.get("position", ""),
         )
