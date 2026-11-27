@@ -85,3 +85,28 @@ body {
 @media (max-width: 420px) {
   .focus-dates { grid-template-columns: 1fr; }
 }
+
+.assistant-bar {
+  margin: -8px 0 30px;
+  padding: 22px;
+  border: 1px solid #cddbd1;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #f8fbf8dd, #e5ede7dd);
+  box-shadow: 0 10px 32px #3f3c3212;
+  backdrop-filter: blur(8px);
+}
+
+.assistant-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.assistant-heading h2 { margin: 0; font: 500 24px/1.2 Georgia, serif; }
+.assistant-status { padding: 4px 8px; border-radius: 99px; background: var(--green); color: white; font-size: 12px; font-weight: 800; }
+.assistant-form { display: grid; grid-template-columns: 1fr auto; gap: 9px; }
+.assistant-form input { min-width: 0; padding: 14px 16px; border-color: #b8cbbf; font-size: 16px; }
+.assistant-form button, .assistant-confirm { border: 0; border-radius: 10px; padding: 12px 18px; background: var(--ink); color: white; font-weight: 700; cursor: pointer; }
+.assistant-result { margin-top: 14px; padding: 14px 16px; border-radius: 11px; background: #fffefa; }
+.assistant-result p { margin: 0; white-space: pre-wrap; }
+.assistant-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 13px; }
+.assistant-cancel { border: 0; border-radius: 10px; padding: 12px 18px; background: #ece8df; color: var(--ink); font-weight: 700; cursor: pointer; }
+
+@media (max-width: 620px) {
+  .assistant-form { grid-template-columns: 1fr; }
+}

@@ -1,6 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 const initialDate = new Date().toISOString().slice(0, 10);
-const state = { date: initialDate, taskDate: initialDate, activeTaskList: '', duration: 60, view: 'day', events: new Map(), allTasks: [], visibleTasks: [], editingEventId: null, colors: {}, defaultColor: '#e85d3f', groups: [], tasklists: [], groupTargetSelect: null, editingGroupName: null, groupManuallyChanged: false, suggestTimer: null };
+const state = { date: initialDate, taskDate: initialDate, activeTaskList: '', duration: 60, view: 'day', events: new Map(), allTasks: [], visibleTasks: [], editingEventId: null, assistantToken: '', colors: {}, defaultColor: '#e85d3f', groups: [], tasklists: [], groupTargetSelect: null, editingGroupName: null, groupManuallyChanged: false, suggestTimer: null };
 const fmtTime = (iso) => new Intl.DateTimeFormat('ru-RU', {hour: '2-digit', minute: '2-digit'}).format(new Date(iso));
 const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const classicEventColors = {'1':'#a4bdfc','2':'#7ae7bf','3':'#dbadff','4':'#ff887c','5':'#fbd75b','6':'#ffb878','7':'#46d6db','8':'#e1e1e1','9':'#5484ed','10':'#51b749','11':'#dc2127'};
@@ -381,6 +381,49 @@ document.querySelectorAll('[data-duration]').forEach(button => button.onclick = 
   button.classList.add('selected'); state.duration = Number(button.dataset.duration);
 });
 $('#findSlots').onclick = loadSlots;
+$('#assistantForm').onsubmit = async event => {
+  event.preventDefault();
+  const button = event.target.querySelector('button[type="submit"]');
+  const text = $('#assistantInput').value.trim();
+  if (!text) return;
+  button.disabled = true;
+  button.textContent = 'Думаю…';
+  $('#assistantResult').classList.remove('hidden');
+  $('#assistantText').textContent = 'Разбираю запрос…';
+  $('#assistantActions').classList.add('hidden');
+  try {
+    const result = await api('/api/assistant/plan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text})});
+    state.assistantToken = result.token || '';
+    $('#assistantText').textContent = result.text;
+    $('#assistantActions').classList.toggle('hidden', !result.requires_confirmation);
+  } catch (error) {
+    state.assistantToken = '';
+    $('#assistantText').textContent = error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Разобрать';
+  }
+};
+$('#cancelAssistant').onclick = async () => {
+  if (state.assistantToken) await api('/api/assistant/cancel', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:state.assistantToken})}).catch(() => {});
+  state.assistantToken = '';
+  $('#assistantResult').classList.add('hidden');
+};
+$('#confirmAssistant').onclick = async () => {
+  if (!state.assistantToken) return;
+  const button = $('#confirmAssistant');
+  button.disabled = true;
+  button.textContent = 'Выполняю…';
+  try {
+    const result = await api('/api/assistant/confirm', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:state.assistantToken})});
+    state.assistantToken = '';
+    $('#assistantText').textContent = result.text;
+    $('#assistantActions').classList.add('hidden');
+    $('#assistantInput').value = '';
+    await Promise.all([loadCurrentView(), loadTasksForDate(), loadSlots()]);
+  } catch (error) { $('#assistantText').textContent = error.message; }
+  finally { button.disabled = false; button.textContent = 'Подтвердить'; }
+};
 $('#addButton').onclick = () => $('#taskDialog').showModal();
 $('#addEventButton').onclick = () => openEventDialog();
 $('#connectGoogle').onclick = connectGoogle;

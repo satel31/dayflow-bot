@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse
@@ -45,6 +46,14 @@ class TaskUpdateRequest(BaseModel):
 class EventGroupCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     color: str = Field(min_length=1, max_length=30)
+
+
+class AssistantRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class AssistantConfirmRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=100)
 
 
 def _api_error(exc: Exception) -> HTTPException:
@@ -98,6 +107,7 @@ def create_spa_app(*, settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="DayFlow", version="0.1.0")
     app.state.settings = web_settings
     app.state.google_auth_sessions: dict[str, GoogleAuthSession] = {}
+    app.state.assistant_drafts: dict[str, object] = {}
 
     def event_groups() -> dict[str, str]:
         return build_event_group_store(web_settings).list_groups()
@@ -127,6 +137,75 @@ def create_spa_app(*, settings: Settings | None = None) -> FastAPI:
         )
         app.state.google_auth_sessions[session.state] = session
         return {"auth_url": session.auth_url}
+
+    @app.post("/api/assistant/plan")
+    async def plan_assistant_action(payload: AssistantRequest) -> dict:
+        import bot as bot_module
+
+        try:
+            result = await asyncio.to_thread(
+                bot_module.handle_natural_language,
+                0,
+                payload.text.strip(),
+                None,
+            )
+        except Exception as exc:
+            raise _api_error(exc) from exc
+        draft = bot_module.pending_drafts.pop(0, None)
+        token = ""
+        if draft is not None:
+            token = uuid4().hex
+            app.state.assistant_drafts[token] = draft
+        return {
+            "text": result.get("text", "Не удалось разобрать запрос."),
+            "requires_confirmation": bool(token),
+            "token": token,
+            "needs_clarification": bool(result.get("needs_clarification")),
+        }
+
+    @app.post("/api/assistant/cancel")
+    async def cancel_assistant_action(payload: AssistantConfirmRequest) -> dict[str, bool]:
+        app.state.assistant_drafts.pop(payload.token, None)
+        return {"cancelled": True}
+
+    @app.post("/api/assistant/confirm")
+    async def confirm_assistant_action(payload: AssistantConfirmRequest) -> dict[str, str]:
+        draft = app.state.assistant_drafts.pop(payload.token, None)
+        if draft is None:
+            raise HTTPException(status_code=404, detail="Черновик устарел. Повторите запрос.")
+        calendar = GoogleCalendarService(web_settings)
+        tasks = GoogleTasksService(web_settings)
+        kind = getattr(draft, "kind", "")
+        try:
+            if kind == "event_create":
+                color_id = build_event_group_store(web_settings).resolve_color_id(draft.group_name) if draft.group_name else None
+                created = await asyncio.to_thread(calendar.create_event, draft.title, draft.start_at, draft.duration_minutes, color_id)
+                return {"status": "completed", "text": f'Событие «{created.title}» создано.'}
+            if kind == "event_update":
+                color_id = build_event_group_store(web_settings).resolve_color_id(draft.group_name) if draft.group_name else None
+                updated = await asyncio.to_thread(calendar.update_event, draft.event_id, new_title=draft.new_title, new_start_at=draft.start_at, duration_minutes=draft.duration_minutes, color_id=color_id)
+                return {"status": "completed", "text": f'Событие «{updated.title}» обновлено.'}
+            if kind == "event_delete":
+                for event_id in draft.event_ids:
+                    await asyncio.to_thread(calendar.delete_event, event_id)
+                return {"status": "completed", "text": f'Событие «{draft.title}» удалено.'}
+            if kind == "task_create":
+                await asyncio.to_thread(tasks.create_task_with_subtasks, draft.title, draft.due_date, draft.notes, draft.task_list_name, list(draft.subtasks))
+                return {"status": "completed", "text": f'Задача «{draft.title}» создана.'}
+            if kind == "task_update":
+                updated = await asyncio.to_thread(tasks.update_task, draft.task_id, draft.task_list_name, new_title=draft.new_title, due_date=draft.due_date, notes=draft.notes)
+                if draft.subtasks:
+                    await asyncio.to_thread(tasks.replace_subtasks, draft.task_id, draft.task_list_name, list(draft.subtasks))
+                return {"status": "completed", "text": f'Задача «{updated.title}» обновлена.'}
+            if kind == "task_delete":
+                await asyncio.to_thread(tasks.delete_task, draft.task_id, draft.task_list_name)
+                return {"status": "completed", "text": f'Задача «{draft.title}» удалена.'}
+            if kind == "task_complete":
+                updated = await asyncio.to_thread(tasks.complete_task, draft.task_id, draft.task_list_name)
+                return {"status": "completed", "text": f'Задача «{updated.title}» выполнена.'}
+        except Exception as exc:
+            raise _api_error(exc) from exc
+        raise HTTPException(status_code=422, detail="Этот тип действия пока не поддерживается.")
 
     @app.get("/api/event-groups")
     async def list_event_groups() -> dict:

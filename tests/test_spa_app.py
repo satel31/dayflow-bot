@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -88,6 +88,7 @@ class FakeCalendar:
 
 class FakeTasks:
     created = []
+    created_with_subtasks = []
 
     def __init__(self, settings):
         pass
@@ -108,6 +109,10 @@ class FakeTasks:
     def create_task(self, title, **kwargs):
         self.created.append((title, kwargs))
         return "task-2"
+
+    def create_task_with_subtasks(self, title, due_date, notes, tasklist_name, subtasks):
+        self.created_with_subtasks.append((title, due_date, notes, tasklist_name, subtasks))
+        return "task-ai", tasklist_name
 
     def complete_task(self, task_id, tasklist_name):
         return None
@@ -352,3 +357,32 @@ def test_google_connect_and_callback(monkeypatch) -> None:
     assert connect.json() == {"auth_url": "https://accounts.google.test/auth"}
     assert callback.status_code == 200
     assert completed
+
+
+def test_assistant_draft_requires_confirmation(monkeypatch) -> None:
+    import bot as bot_module
+
+    draft = bot_module.TaskCreateDraft(
+        kind="task_create",
+        title="Подготовить отчёт",
+        due_date=date(2026, 9, 10),
+        notes="",
+        task_list_name="Работа",
+        subtasks=(),
+    )
+
+    def fake_handle(chat_id, text, user_id):
+        bot_module.pending_drafts[chat_id] = draft
+        return {"text": "Создать задачу «Подготовить отчёт»?", "draft": draft}
+
+    FakeTasks.created_with_subtasks.clear()
+    monkeypatch.setattr(bot_module, "handle_natural_language", fake_handle)
+    web = client(monkeypatch)
+
+    planned = web.post("/api/assistant/plan", json={"text": "создай отчёт"})
+    assert planned.json()["requires_confirmation"] is True
+    assert FakeTasks.created_with_subtasks == []
+
+    confirmed = web.post("/api/assistant/confirm", json={"token": planned.json()["token"]})
+    assert confirmed.json()["status"] == "completed"
+    assert FakeTasks.created_with_subtasks[0][0] == "Подготовить отчёт"

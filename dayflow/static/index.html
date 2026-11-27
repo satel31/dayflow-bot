@@ -23,6 +23,18 @@
       <div class="hero-actions"><button class="secondary" id="addEventButton"><span>＋</span> Событие</button><button class="primary" id="addButton"><span>＋</span> Задача</button></div>
     </section>
 
+    <section class="assistant-bar" aria-labelledby="assistantTitle">
+      <div class="assistant-heading"><div><p class="eyebrow">БЫСТРОЕ ДЕЙСТВИЕ</p><h2 id="assistantTitle">Спросить DayFlow</h2></div><span class="assistant-status">AI</span></div>
+      <form id="assistantForm" class="assistant-form">
+        <input id="assistantInput" name="text" maxlength="2000" required autocomplete="off" placeholder="Например: поставь йогу завтра в 19:00 на час">
+        <button type="submit">Разобрать</button>
+      </form>
+      <div class="assistant-result hidden" id="assistantResult" aria-live="polite">
+        <p id="assistantText"></p>
+        <div class="assistant-actions hidden" id="assistantActions"><button type="button" class="assistant-cancel" id="cancelAssistant">Отмена</button><button type="button" class="assistant-confirm" id="confirmAssistant">Подтвердить</button></div>
+      </div>
+    </section>
+
     <div class="notice hidden" id="notice"><span id="noticeText"></span><button class="connect hidden" id="connectGoogle">Подключить Google</button></div>
     <section class="grid">
       <article class="panel timeline-panel">
@@ -84,6 +96,6 @@
       <div class="existing-groups"><p class="eyebrow">СУЩЕСТВУЮЩИЕ ГРУППЫ</p><div id="existingGroups"></div></div>
     </form>
   </dialog>
-  <script src="/assets/app.js?v=24" defer></script>
+  <script src="/assets/app.js?v=25" defer></script>
 </body>
 </html>

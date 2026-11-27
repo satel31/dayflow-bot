@@ -61,18 +61,17 @@ python bot.py
 
 ```env
 WEBHOOK_BASE_URL=https://your-service.example
-TELEGRAM_WEBHOOK_SECRET=long-random-secret
 ```
 
 Затем запустите HTTP-приложение:
 
 ```powershell
-uvicorn dayflow.web_app:app --host 0.0.0.0 --port 8000
+uvicorn dayflow.spa_app:app --host 0.0.0.0 --port 8000
 ```
 
-При старте приложение регистрирует `${WEBHOOK_BASE_URL}/telegram/webhook` в Telegram.
-Проверка доступности сервиса: `GET /health`. Локальный polling-режим через
-`python bot.py` пока сохранен для разработки.
+Приложение открывает одностраничный веб-интерфейс DayFlow и API.
+Проверка доступности сервиса: `GET /health`. Старый Telegram-код пока сохранён
+только для переиспользования AI-сценариев и последующего безопасного удаления.
 
 Для сервера используйте Dockerfile из корня проекта:
 
